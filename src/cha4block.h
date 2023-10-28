@@ -1,3 +1,5 @@
+#pragma once
+#include "chacha20.h"
 
 #define VEC4_ROT(A, IMM)                                                       \
     _mm_or_si128(_mm_slli_epi32(A, IMM), _mm_srli_epi32(A, (32 - IMM)))
@@ -41,12 +43,11 @@
         _mm_storeu_si128((__m128i*)(CT + 192), x_##D);                         \
     }
 
-static inline uint64_t
-_cha_4block(uint32_t* state, uint8_t* begin, uint8_t* end) {
+static inline uint64_t _cha_4block(cha_ctx* ctx, uint8_t* begin, uint8_t* end) {
     if (end - begin < 256)
         return 0;
     uint8_t* c = begin;
-    uint32_t* x = state;
+    uint32_t* state = ctx->state;
 
     /* constant for shuffling bytes (replacing multiple-of-8 rotates) */
     const __m128i rot16 =
@@ -55,22 +56,22 @@ _cha_4block(uint32_t* state, uint8_t* begin, uint8_t* end) {
       _mm_set_epi8(14, 13, 12, 15, 10, 9, 8, 11, 6, 5, 4, 7, 2, 1, 0, 3);
 
     // Load state to vectors, duplicate four times
-    __m128i x_0 = _mm_set1_epi32(x[0]);
-    __m128i x_1 = _mm_set1_epi32(x[1]);
-    __m128i x_2 = _mm_set1_epi32(x[2]);
-    __m128i x_3 = _mm_set1_epi32(x[3]);
-    __m128i x_4 = _mm_set1_epi32(x[4]);
-    __m128i x_5 = _mm_set1_epi32(x[5]);
-    __m128i x_6 = _mm_set1_epi32(x[6]);
-    __m128i x_7 = _mm_set1_epi32(x[7]);
-    __m128i x_8 = _mm_set1_epi32(x[8]);
-    __m128i x_9 = _mm_set1_epi32(x[9]);
-    __m128i x_10 = _mm_set1_epi32(x[10]);
-    __m128i x_11 = _mm_set1_epi32(x[11]);
+    __m128i x_0 = _mm_set1_epi32(state[0]);
+    __m128i x_1 = _mm_set1_epi32(state[1]);
+    __m128i x_2 = _mm_set1_epi32(state[2]);
+    __m128i x_3 = _mm_set1_epi32(state[3]);
+    __m128i x_4 = _mm_set1_epi32(state[4]);
+    __m128i x_5 = _mm_set1_epi32(state[5]);
+    __m128i x_6 = _mm_set1_epi32(state[6]);
+    __m128i x_7 = _mm_set1_epi32(state[7]);
+    __m128i x_8 = _mm_set1_epi32(state[8]);
+    __m128i x_9 = _mm_set1_epi32(state[9]);
+    __m128i x_10 = _mm_set1_epi32(state[10]);
+    __m128i x_11 = _mm_set1_epi32(state[11]);
     __m128i x_12;
     __m128i x_13;
-    __m128i x_14 = _mm_set1_epi32(x[14]);
-    __m128i x_15 = _mm_set1_epi32(x[15]);
+    __m128i x_14 = _mm_set1_epi32(state[14]);
+    __m128i x_15 = _mm_set1_epi32(state[15]);
     __m128i orig0 = x_0;
     __m128i orig1 = x_1;
     __m128i orig2 = x_2;

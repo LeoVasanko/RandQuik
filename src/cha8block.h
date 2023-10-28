@@ -1,3 +1,5 @@
+#pragma once
+#include "chacha20.h"
 
 #define VEC8_ROT(A, IMM)                                                       \
     _mm256_or_si256(_mm256_slli_epi32(A, IMM), _mm256_srli_epi32(A, (32 - IMM)))
@@ -179,12 +181,12 @@
         _mm256_storeu_si256((__m256i*)(c + 448), t[D2]);                       \
     }
 
-static inline uint64_t
-_cha_8block(uint32_t* state, uint8_t* begin, uint8_t* end) {
+static inline uint64_t _cha_8block(cha_ctx* ctx, uint8_t* begin, uint8_t* end) {
     if (end - begin < 512)
         return 0;
 
     uint8_t* c = begin;
+    uint32_t* state = ctx->state;
     uint64_t* counter = (uint64_t*)(state + 12);
     /* constant for shuffling bytes (replacing multiple-of-8 rotates) */
     __m256i rot16 = _mm256_set_epi8(

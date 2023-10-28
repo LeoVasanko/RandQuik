@@ -1,3 +1,6 @@
+#pragma once
+#include "chacha20.h"
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,13 +16,12 @@
     QUARTERSTEP(a, b, d, 8);                                                   \
     QUARTERSTEP(c, d, b, 7);
 
-static inline uint64_t
-_cha_block(uint32_t* state, uint8_t* begin, uint8_t* end) {
-    uint64_t* counter = (uint64_t*)&state[12];
+static inline uint64_t _cha_block(cha_ctx* ctx, uint8_t* begin, uint8_t* end) {
+    uint64_t* counter = (uint64_t*)&ctx->state[12];
     uint8_t* c = begin;
     while (c < end) {
         uint32_t x[16];
-        memcpy(x, state, sizeof x);
+        memcpy(x, ctx->state, sizeof x);
         for (int i = 20; i > 0; i -= 2) {
             QUARTERROUND(x[0], x[4], x[8], x[12])
             QUARTERROUND(x[1], x[5], x[9], x[13])
@@ -31,7 +33,7 @@ _cha_block(uint32_t* state, uint8_t* begin, uint8_t* end) {
             QUARTERROUND(x[3], x[4], x[9], x[14])
         }
         for (int i = 0; i < 16; i++)
-            x[i] += state[i];
+            x[i] += ctx->state[i];
 
         ++*counter;
 

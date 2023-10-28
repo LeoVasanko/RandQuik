@@ -24,15 +24,15 @@
 #include "cha8block.h"
 
 void cha_init(cha_ctx* ctx, const uint8_t* key, const uint8_t* iv) {
-    ctx->input[0] = 0x61707865;
-    ctx->input[1] = 0x3320646e;
-    ctx->input[2] = 0x79622d32;
-    ctx->input[3] = 0x6b206574;
-    memcpy(ctx->input + 4, key, 32);
-    memcpy(ctx->input + 12, iv, 16);
+    ctx->state[0] = 0x61707865;
+    ctx->state[1] = 0x3320646e;
+    ctx->state[2] = 0x79622d32;
+    ctx->state[3] = 0x6b206574;
+    memcpy(ctx->state + 4, key, 32);
+    memcpy(ctx->state + 12, iv, 16);
 }
 
-void cha_wipe(cha_ctx* ctx) { memset(&ctx, 0, sizeof(cha_ctx)); }
+void cha_wipe(cha_ctx* ctx) { memset(ctx, 0, sizeof(cha_ctx)); }
 
 int cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen) {
     // The included header will mess with these variables
@@ -41,13 +41,13 @@ int cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen) {
     // TODO: Handle resume if we are not at block boundary
     if (__builtin_cpu_supports("ssse3")) {
         if (__builtin_cpu_supports("avx2")) {
-            c += _cha_8block(ctx->input, c, end);
+            c += _cha_8block(ctx, c, end);
             assert(end - c < 512);
         }
-        c += _cha_4block(ctx->input, c, end);
+        c += _cha_4block(ctx, c, end);
         assert(end - c < 256);
     }
-    c += _cha_block(ctx->input, c, end);
+    c += _cha_block(ctx, c, end);
     assert(c == end);
     return 0;
 }
