@@ -44,5 +44,5 @@ _cha_block(uint32_t* state, uint8_t* begin, uint8_t* end) {
         memcpy(c, x, 64);
         c += 64;
     }
-    return end - c;
+    return c - begin;
 }

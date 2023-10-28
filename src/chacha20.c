@@ -39,9 +39,11 @@ int cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen) {
     uint8_t* c = out;
     uint8_t* end = out + outlen;
     // TODO: Handle resume if we are not at block boundary
-    if (__builtin_cpu_supports("avx2")) {
-        c += _cha_8block(ctx->input, c, end);
-        assert(end - c < 512);
+    if (__builtin_cpu_supports("ssse3")) {
+        if (__builtin_cpu_supports("avx2")) {
+            c += _cha_8block(ctx->input, c, end);
+            assert(end - c < 512);
+        }
         c += _cha_4block(ctx->input, c, end);
         assert(end - c < 256);
     }
