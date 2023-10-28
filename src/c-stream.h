@@ -2,26 +2,25 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define QUARTERSTEP(a, b, c, n) \
-    a += b;                     \
-    c ^= a;                     \
+#define QUARTERSTEP(a, b, c, n)                                                \
+    a += b;                                                                    \
+    c ^= a;                                                                    \
     c = (c << n) | (c >> (32 - n))
 
-#define QUARTERROUND(a, b, c, d) \
-    QUARTERSTEP(a, b, d, 16);    \
-    QUARTERSTEP(c, d, b, 12);    \
-    QUARTERSTEP(a, b, d, 8);     \
+#define QUARTERROUND(a, b, c, d)                                               \
+    QUARTERSTEP(a, b, d, 16);                                                  \
+    QUARTERSTEP(c, d, b, 12);                                                  \
+    QUARTERSTEP(a, b, d, 8);                                                   \
     QUARTERSTEP(c, d, b, 7);
 
-{
-    // Change variables x and orig...
-    uint32_t const *orig = x;
-    while (bytes > 0)
-    {
+static inline uint64_t
+_cha_block(uint32_t* state, uint8_t* begin, uint8_t* end) {
+    uint64_t* counter = (uint64_t*)&state[12];
+    uint8_t* c = begin;
+    while (c < end) {
         uint32_t x[16];
-        memcpy(x, orig, sizeof x);
-        for (int i = 20; i > 0; i -= 2)
-        {
+        memcpy(x, state, sizeof x);
+        for (int i = 20; i > 0; i -= 2) {
             QUARTERROUND(x[0], x[4], x[8], x[12])
             QUARTERROUND(x[1], x[5], x[9], x[13])
             QUARTERROUND(x[2], x[6], x[10], x[14])
@@ -32,20 +31,18 @@
             QUARTERROUND(x[3], x[4], x[9], x[14])
         }
         for (int i = 0; i < 16; i++)
-            x[i] += orig[i];
+            x[i] += state[i];
 
-        uint64_t *counter = (uint64_t *)&orig[12];
         ++*counter;
 
-        if (bytes < 64)
-        {
+        uint64_t bytes = end - c;
+        if (bytes < 64) {
             memcpy(c, x, bytes);
-            c += bytes;
-            bytes = 0;
+            c = end;
             break;
         }
         memcpy(c, x, 64);
-        bytes -= 64;
         c += 64;
     }
+    return end - c;
 }
