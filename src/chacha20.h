@@ -1,10 +1,11 @@
+#pragma once
 #include <stdbool.h>
 #include <stdint.h>
 
 static const uint64_t CHA_BLOCK_SIZE = 64;
 
 typedef struct cha_ctx {
-    uint32_t input[16];
+    uint32_t state[16];
 } cha_ctx;
 
 /// @brief Initialize cha_ctx
@@ -31,6 +32,5 @@ int cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen);
 /// @param iv
 /// @return
 int cha_generate(
-  unsigned char* out, uint64_t outlen, const unsigned char key[32],
-  const unsigned char iv[16]
+  uint8_t* out, uint64_t outlen, const uint8_t key[32], const uint8_t iv[16]
 );

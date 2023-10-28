@@ -8,4 +8,9 @@ executable(
 )
 dependency('threads')
 
-library('randquik-chacha20', 'src/chacha20.c', build_by_default: true)
+library(
+    'randquik-chacha20',
+    'src/chacha20.c',
+    build_by_default: true,
+    c_args: ['-Wall', '-O3', '-march=native'],
+)
