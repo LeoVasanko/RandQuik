@@ -27,4 +27,4 @@ Alternatively you may compile it by hand with `gcc randquik.c -o randquik -O3 -p
 
 ## Python module
 
-I have a Python binding to this in the works, with the intention of being able to use these faster random numbers also for creating byte buffers and with numpy.random there.
+I have a Python binding to this in the works, with the intention of being able to use these faster random numbers also for creating byte buffers and with numpy.random there. The module now offers functional Numpy BitGenerator adaptor, and a friendly general purpose Python API that can fill up any buffer with random bytes.
