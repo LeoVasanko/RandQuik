@@ -45,7 +45,10 @@ static inline uint64_t
 _cha_4block(uint32_t* state, uint8_t* begin, uint8_t* end) {
     if (end - begin < 256)
         return 0;
+    uint8_t* c = begin;
     uint32_t* x = state;
+    uint64_t* counter = (uint64_t*)&state[12]; // low u32 in 12, high u32 in 13
+
     const __m256i vec_increment =
       _mm256_set_epi64x(3, 2, 1, 0); // 0, 1, 2, 3 for the increments
     const __m256i interleave =
@@ -93,8 +96,9 @@ _cha_4block(uint32_t* state, uint8_t* begin, uint8_t* end) {
     __m128i t_0, t_1, t_2, t_3, t_4, t_5, t_6, t_7, t_8, t_9, t_10, t_11, t_12,
       t_13, t_14, t_15;
 
-    uint8_t* c = begin;
-    uint64_t* counter = (uint64_t*)&x[12]; // low u32 in 12, high u32 in 13
+    const __m128i addv12 = _mm_set_epi64x(1, 0);
+    const __m128i addv13 = _mm_set_epi64x(3, 2);
+
     while (end - c >= 256) {
         x_0 = orig0;
         x_1 = orig1;
@@ -113,11 +117,23 @@ _cha_4block(uint32_t* state, uint8_t* begin, uint8_t* end) {
 
         // Calculate counter + 0..3 for adjacent blocks (x12 low and x13
         // high of each)
-        __m256i counters =
-          _mm256_add_epi64(_mm256_set1_epi64x(*counter), vec_increment);
-        counters = _mm256_permutevar8x32_epi32(counters, interleave);
-        x_12 = _mm256_extracti128_si256(counters, 0);
-        x_13 = _mm256_extracti128_si256(counters, 1);
+        uint32_t in12 = state[12];
+        uint32_t in13 = state[13];
+        uint64_t in1213 = ((uint64_t)in12) | (((uint64_t)in13) << 32);
+        __m128i t12, t13;
+        t12 = _mm_set1_epi64x(in1213);
+        t13 = _mm_set1_epi64x(in1213);
+        x_12 = _mm_add_epi64(addv12, t12);
+        x_13 = _mm_add_epi64(addv13, t13);
+        t12 = _mm_unpacklo_epi32(x_12, x_13);
+        t13 = _mm_unpackhi_epi32(x_12, x_13);
+        x_12 = _mm_unpacklo_epi32(t12, t13);
+        x_13 = _mm_unpackhi_epi32(t12, t13);
+        orig12 = x_12;
+        orig13 = x_13;
+        in1213 += 4;
+        state[12] = in1213 & 0xFFFFFFFF;
+        state[13] = (in1213 >> 32) & 0xFFFFFFFF;
 
         for (int i = 0; i < 10; ++i) {
             // Mix columns
@@ -137,7 +153,7 @@ _cha_4block(uint32_t* state, uint8_t* begin, uint8_t* end) {
         ONEQUAD(8, 9, 10, 11, c + 32);
         ONEQUAD(12, 13, 14, 15, c + 48);
 
-        *counter += 4;
+        // *counter += 4;
         c += 256;
     }
     return c - begin; // Bytes written

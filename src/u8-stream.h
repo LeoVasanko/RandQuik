@@ -169,7 +169,7 @@
         t[C2] = _mm256_permute2x128_si256(x[C], x[C2], 0x31);                  \
         t[D] = _mm256_permute2x128_si256(x[D], x[D2], 0x20);                   \
         t[D2] = _mm256_permute2x128_si256(x[D], x[D2], 0x31);                  \
-        _mm256_storeu_si256((__m256i*)(c + 0), t[A]);                          \
+        _mm256_storeu_si256((__m256i*)(c), t[A]);                              \
         _mm256_storeu_si256((__m256i*)(c + 64), t[B]);                         \
         _mm256_storeu_si256((__m256i*)(c + 128), t[C]);                        \
         _mm256_storeu_si256((__m256i*)(c + 192), t[D]);                        \
@@ -185,6 +185,7 @@ _cha_8block(uint32_t* state, uint8_t* begin, uint8_t* end) {
         return 0;
 
     uint8_t* c = begin;
+    uint64_t* counter = (uint64_t*)(state + 12);
     /* constant for shuffling bytes (replacing multiple-of-8 rotates) */
     __m256i rot16 = _mm256_set_epi8(
       13, 12, 15, 14, 9, 8, 11, 10, 5, 4, 7, 6, 1, 0, 3, 2, 13, 12, 15, 14, 9,
@@ -205,10 +206,10 @@ _cha_8block(uint32_t* state, uint8_t* begin, uint8_t* end) {
 
     while (end - c >= 512) {
         for (int i = 0; i < 16; ++i)
-            x[i] = orig[i];
+            if (i != 12 && i != 13)
+                x[i] = orig[i];
 
         // Calculate the eight parallel counters on x_12 and x_13
-        uint64_t* counter = (uint64_t*)(x + 12);
         t[13] = _mm256_broadcastq_epi64(_mm_cvtsi64_si128(*counter));
         t[12] = _mm256_add_epi64(addv12, t[13]);
         t[13] = _mm256_add_epi64(addv13, t[13]);
