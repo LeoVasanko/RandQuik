@@ -19,9 +19,9 @@
 #include <tmmintrin.h>
 #include <unistd.h>
 
-#include "c-stream.h"
-#include "u4-stream.h"
-#include "u8-stream.h"
+#include "cha1block.h"
+#include "cha4block.h"
+#include "cha8block.h"
 
 void cha_init(cha_ctx* ctx, const uint8_t* key, const uint8_t* iv) {
     ctx->input[0] = 0x61707865;
