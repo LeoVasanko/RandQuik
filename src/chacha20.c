@@ -30,6 +30,8 @@ void cha_init(cha_ctx* ctx, const uint8_t* key, const uint8_t* iv) {
     ctx->state[3] = 0x6b206574;
     memcpy(ctx->state + 4, key, 32);
     memcpy(ctx->state + 12, iv, 16);
+    memset(ctx->unconsumed, 0, sizeof ctx->unconsumed);
+    ctx->uncount = 0;
 }
 
 void cha_wipe(cha_ctx* ctx) { memset(ctx, 0, sizeof(cha_ctx)); }
@@ -38,6 +40,19 @@ int cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen) {
     // The included header will mess with these variables
     uint8_t* c = out;
     uint8_t* end = out + outlen;
+    if (ctx->uncount) {
+        // Deliver stored bytes first
+        uint64_t N = ctx->uncount >= outlen ? outlen : ctx->uncount;
+        fprintf(stderr, "%lu, %i, %lu\n", N, ctx->uncount, outlen);
+        memcpy(c, ctx->unconsumed, N);
+        ctx->uncount -= N;
+        c += N;
+        if (ctx->uncount) {
+            memmove(ctx->unconsumed, ctx->unconsumed + N, ctx->uncount);
+        }
+        if (c == out + outlen)
+            return 0;
+    }
     // TODO: Handle resume if we are not at block boundary
     if (__builtin_cpu_supports("ssse3")) {
         if (__builtin_cpu_supports("avx2")) {

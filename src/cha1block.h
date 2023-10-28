@@ -41,6 +41,9 @@ static inline uint64_t _cha_block(cha_ctx* ctx, uint8_t* begin, uint8_t* end) {
         if (bytes < 64) {
             memcpy(c, x, bytes);
             c = end;
+            // Leftover bytes are stored in ctx for next call
+            ctx->uncount = 64 - bytes;
+            memcpy(ctx->unconsumed, x + bytes, ctx->uncount);
             break;
         }
         memcpy(c, x, 64);
