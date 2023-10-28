@@ -1,5 +1,3 @@
-<img src="https://github.com/LeoVasanko/RandQuik/blob/main/docs/random.webp?raw=true" width="220" alt="Screenshot" align="left">
-
 # Extremely fast Cryptographically Secure PRNG
 
 I was disappointed with the sad state of random number generators. Many languages don't ship anything useful and some are stuck with whatever the OS provides. All existing implementations are slow, typically maxing out at a few hundred megabytes per second.
@@ -11,6 +9,8 @@ Secondly, flaws have been found in non-cryptographic algorithms, especially on M
 ## CLI: randquik
 
 A simple shell tool that simply produces randomness to a file or pipe. It uses ChaCha20 encryption algorithm to produce a random stream that cannot be predicted unless one knows the key - the seed - being used. Keeping always the same seed may be useful for researchers and such who need repatable results.
+
+<img src="https://github.com/LeoVasanko/RandQuik/blob/main/docs/random.webp?raw=true" width="800" alt="Screenshot">
 
 ## Installation
 
