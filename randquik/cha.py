@@ -30,12 +30,20 @@ lib = ffi.dlopen(
 
 
 def _processKeys(key, iv):
-    if len(key) != 32:
+    key = memoryview(key)
+    iv = memoryview(iv)
+    if key.nbytes != 32:
         raise ValueError("key must be 32 bytes")
-    if len(iv) != 16:
-        raise ValueError(
-            "iv must be full 16 bytes, starting with the counter - usually zeroes - followed by nonce"
-        )
+    if iv.nbytes != 16:
+        # Allow original and IETF nonces with zero counter
+        if iv.nbytes == 8:
+            iv = bytes(8) + iv
+        elif iv.nbytes == 12:
+            iv = bytes(4) + iv
+        else:
+            raise ValueError(
+                "iv lenth must be 8 (original nonce), 12 (IETF) or 16 (counter in initial 8 bytes)"
+            )
     return ffi.from_buffer(key), ffi.from_buffer(iv)
 
 

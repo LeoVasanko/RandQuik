@@ -3,7 +3,7 @@ requires = ["hatchling", "hatch-vcs", "wheel", "cffi"]
 build-backend = "hatchling.build"
 
 [project]
-name = "RandQuik"
+name = "randquik"
 version = "0.1.0"
 description = "Extremely fast and cryptographically secure random number generator."
 readme = "README.md"
@@ -16,7 +16,7 @@ classifiers = [
     "Topic :: Security",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dependencies = ["cffi>=1.0.1"]
+dependencies = ["cffi>=1.0.1", "numpy"]
 requires-python = ">=3.10"
 keywords = [
     "random",
@@ -30,7 +30,7 @@ keywords = [
 [project.urls]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff", "cryptography"]
+dev = ["pytest", "ruff", "cryptography", "scipy"]
 
 [tool.hatchling]
 
