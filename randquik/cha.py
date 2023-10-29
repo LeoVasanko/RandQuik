@@ -11,7 +11,11 @@ if not src.is_dir():
 ffi = cffi.FFI()
 ffi.cdef(
     """
-    typedef struct cha_ctx { uint32_t input[16]; } cha_ctx;
+    typedef struct cha_ctx {
+        uint32_t input[16];
+        uint8_t unconsumed[64];
+        uint8_t uncount;
+    } cha_ctx;
 
     int cha_generate(uint8_t* out, uint64_t outlen, const uint8_t key[32], const uint8_t iv[16]);
 
@@ -20,7 +24,9 @@ ffi.cdef(
     int cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen);
     """
 )
-lib = ffi.dlopen("../build/librandquik-chacha20.so")
+lib = ffi.dlopen(
+    (Path(__file__).parent.parent / "build/librandquik-chacha20.so").as_posix()
+)
 
 
 def _processKeys(key, iv):
@@ -58,14 +64,14 @@ class Cha:
 
     def __call__(self, out: bytearray | Any):
         """Fill the parameter with random bytes"""
-        out, outlen = _processBuffer(out)
-        lib.cha_update(self.ctx, out, outlen)
+        outbuf, outlen = _processBuffer(out)
+        lib.cha_update(self.ctx, outbuf, outlen)
         return out
 
 
 def generate(out: bytearray | Any, key: bytes | Any, iv: bytes | Any):
     """Setup a generator, fill the out buffer and dispose the generator"""
-    key, iv =_processKeys(key, iv)
-    out, outlen = _processBuffer(out)
-    lib.cha_generate(out, outlen, key, iv)
+    key, iv = _processKeys(key, iv)
+    outbuf, outlen = _processBuffer(out)
+    lib.cha_generate(outbuf, outlen, key, iv)
     return out

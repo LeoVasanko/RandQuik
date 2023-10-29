@@ -6,6 +6,8 @@ static const uint64_t CHA_BLOCK_SIZE = 64;
 
 typedef struct cha_ctx {
     uint32_t state[16];
+    uint8_t unconsumed[64];
+    uint8_t uncount;
 } cha_ctx;
 
 /// @brief Initialize cha_ctx
