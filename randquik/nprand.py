@@ -1,8 +1,9 @@
 import secrets
+import sys
 
 import cha
 import numpy as np
-import sys
+
 
 class ChaRandom(np.random.BitGenerator):
     def __init__(self, seed=None):
