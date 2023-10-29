@@ -20,10 +20,11 @@ Clone the repository, use Meson build:
 meson setup build
 cd build
 ninja
-./randquik
+sudo ninja install  # optionally
+randquik > /dev/null
 ```
 
-Alternatively you may compile it by hand with `gcc randquik.c -o randquik -O3 -pthread`.
+Alternatively you may compile it by hand with `gcc *.c -o randquik -O3 -pthread`.
 
 ## Python module
 
