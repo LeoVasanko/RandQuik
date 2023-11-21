@@ -81,9 +81,16 @@ class Cha:
         return out
 
 
-def generate(out: bytearray | Any, key: bytes | Any, iv: bytes | Any):
-    """Setup a generator, fill the out buffer and dispose the generator"""
+def generate_into(
+    out: bytearray | memoryview | Any, key: bytes | Any, iv: bytes | Any = bytes(16)
+):
+    """Fill in random bytes into an existing array (buffer interface)"""
     key, iv = _processKeys(key, iv)
     outbuf, outlen = _processBuffer(out)
     lib.cha_generate(outbuf, outlen, key, iv)
     return out
+
+
+def generate(outlen: int, key: bytes | Any, iv: bytes | Any = bytes(16)):
+    """Return a bytearray of random bytes"""
+    return generate_into(bytearray(outlen), key, iv)
