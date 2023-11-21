@@ -1,10 +1,25 @@
+#include "chacha20.h"
+
+#if defined(__x86_64__)
 #ifdef __GNUC__
 #pragma GCC target("sse2")
 #pragma GCC target("ssse3")
 #pragma GCC target("avx2")
 #endif
 
-#include "chacha20.h"
+#include <emmintrin.h>  // SSE2
+#include "cha4block.h"
+
+#include <immintrin.h>  // AVX2
+#include <tmmintrin.h>  // SSSE3
+#include "cha8block.h"
+
+#elif defined(__aarch64__)
+#include "sse2neon.h"
+#include "cha4block.h"
+#endif
+
+#include "cha1block.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -12,16 +27,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <emmintrin.h>
-#include <immintrin.h>
 #include <pthread.h>
 #include <time.h>
-#include <tmmintrin.h>
 #include <unistd.h>
-
-#include "cha1block.h"
-#include "cha4block.h"
-#include "cha8block.h"
 
 void cha_init(cha_ctx* ctx, const uint8_t* key, const uint8_t* iv) {
     ctx->state[0] = 0x61707865;
@@ -43,7 +51,7 @@ int cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen) {
     if (ctx->uncount) {
         // Deliver stored bytes first
         uint64_t N = ctx->uncount >= outlen ? outlen : ctx->uncount;
-        fprintf(stderr, "%lu, %i, %lu\n", N, ctx->uncount, outlen);
+        fprintf(stderr, "%llu, %i, %llu\n", N, ctx->uncount, outlen);
         memcpy(c, ctx->unconsumed, N);
         ctx->uncount -= N;
         c += N;
@@ -53,6 +61,7 @@ int cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen) {
         if (c == out + outlen)
             return 0;
     }
+#if defined(__x86_64__)
     // TODO: Handle resume if we are not at block boundary
     if (__builtin_cpu_supports("ssse3")) {
         if (__builtin_cpu_supports("avx2")) {
@@ -62,6 +71,9 @@ int cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen) {
         c += _cha_4block(ctx, c, end);
         assert(end - c < 256);
     }
+#elif defined(__aarch64__)
+    c += _cha_4block(ctx, c, end);
+#endif
     c += _cha_block(ctx, c, end);
     assert(c == end);
     return 0;
