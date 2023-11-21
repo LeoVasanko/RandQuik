@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -24,9 +25,12 @@ ffi.cdef(
     int cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen);
     """
 )
-lib = ffi.dlopen(
-    (Path(__file__).parent.parent / "build/librandquik-chacha20.so").as_posix()
-)
+libname = "librandquik-chacha20.so"
+if sys.platform == "darwin":
+    libname = "librandquik-chacha20.dylib"
+elif sys.platform == "win32":
+    libname = "randquik-chacha20.dll"
+lib = ffi.dlopen((Path(__file__).parent.parent / f"build/{libname}").as_posix())
 
 
 def _processKeys(key, iv):

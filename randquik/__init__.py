@@ -1,3 +1,3 @@
-from _version import __version__
+# from _version import __version__
 
-__version__  # Public API
+# __version__  # Public API
