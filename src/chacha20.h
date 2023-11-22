@@ -1,7 +1,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-static const uint64_t CHA_BLOCK_SIZE = 64;
+#define CHA_BLOCK_SIZE 64
 
 typedef struct cha_ctx {
     uint32_t state[16];
@@ -15,20 +15,11 @@ typedef struct cha_ctx {
 #pragma GCC target("ssse3")
 #pragma GCC target("avx2")
 #endif
-
-#include <emmintrin.h>  // SSE2
-#include "cha4block.h"
-
-#include <immintrin.h>  // AVX2
-#include <tmmintrin.h>  // SSSE3
 #include "cha8block.h"
-
-#elif defined(__aarch64__)
-#include "sse2neon.h"
-#include "cha4block.h"
 #endif
 
 #include "cha1block.h"
+#include "cha4block.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -39,7 +30,6 @@ typedef struct cha_ctx {
 #include <pthread.h>
 #include <time.h>
 #include <unistd.h>
-
 
 /// @brief Initialize cha_ctx
 /// @param ctx holds ChaCha20 state
@@ -79,7 +69,8 @@ void cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen) {
         if (ctx->uncount) {
             memmove(ctx->unconsumed, ctx->unconsumed + N, ctx->uncount);
         }
-        if (c == out + outlen) return;
+        if (c == out + outlen)
+            return;
     }
 #if defined(__x86_64__)
     // TODO: Handle resume if we are not at block boundary
