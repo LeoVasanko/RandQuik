@@ -1,6 +1,3 @@
-#pragma once
-#include "chacha20.h"
-
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>

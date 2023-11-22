@@ -46,7 +46,7 @@ def _processKeys(key, iv):
             iv = bytes(4) + iv
         else:
             raise ValueError(
-                "iv lenth must be 8 (original nonce), 12 (IETF) or 16 (counter in initial 8 bytes)"
+                "iv lenth must be 8 (ChaCha20 original), 12 (IETF) or 16 (counter in initial 8 bytes)"
             )
     return ffi.from_buffer(key), ffi.from_buffer(iv)
 
