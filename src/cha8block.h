@@ -1,3 +1,6 @@
+#include <immintrin.h> // AVX2
+#include <tmmintrin.h> // SSSE3
+
 #define VEC8_ROT(A, IMM)                                                       \
     _mm256_or_si256(_mm256_slli_epi32(A, IMM), _mm256_srli_epi32(A, (32 - IMM)))
 

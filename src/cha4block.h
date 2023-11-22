@@ -1,3 +1,10 @@
+#if defined(__x86_64__)
+#include <immintrin.h> // AVX2
+#include <tmmintrin.h> // SSSE3
+#elif defined(__aarch64__)
+#include "sse2neon.h"
+#endif
+
 #define VEC4_ROT(A, IMM)                                                       \
     _mm_or_si128(_mm_slli_epi32(A, IMM), _mm_srli_epi32(A, (32 - IMM)))
 
