@@ -7,7 +7,7 @@ name = "randquik"
 version = "0.1.0"
 description = "Extremely fast and cryptographically secure random number generator."
 readme = "README.md"
-license = ""
+license.text = "Public Domain"
 authors = [{ name = "Vasanko" }]
 classifiers = [
     "Operating System :: POSIX",
