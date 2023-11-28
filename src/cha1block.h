@@ -1,50 +1,26 @@
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 
-#define QUARTERSTEP(a, b, c, n)                                                \
-    a += b;                                                                    \
-    c ^= a;                                                                    \
-    c = (c << n) | (c >> (32 - n))
+// clang-format off
+#define QUARTERSTEP(a, b, c, n) a += b; c ^= a; c = (c << n) | (c >> (32 - n))
+#define QUARTERROUND(a, b, c, d) {\
+    QUARTERSTEP(a, b, d, 16); QUARTERSTEP(c, d, b, 12); \
+    QUARTERSTEP(a, b, d, 8);  QUARTERSTEP(c, d, b, 7); }
 
-#define QUARTERROUND(a, b, c, d)                                               \
-    QUARTERSTEP(a, b, d, 16);                                                  \
-    QUARTERSTEP(c, d, b, 12);                                                  \
-    QUARTERSTEP(a, b, d, 8);                                                   \
-    QUARTERSTEP(c, d, b, 7);
-
-static inline uint64_t _cha_block(cha_ctx* ctx, uint8_t* begin, uint8_t* end) {
-    uint64_t* counter = (uint64_t*)&ctx->state[12];
-    uint8_t* c = begin;
-    while (c < end) {
-        uint32_t x[16];
-        memcpy(x, ctx->state, sizeof x);
-        for (int i = 20; i > 0; i -= 2) {
-            QUARTERROUND(x[0], x[4], x[8], x[12])
-            QUARTERROUND(x[1], x[5], x[9], x[13])
-            QUARTERROUND(x[2], x[6], x[10], x[14])
-            QUARTERROUND(x[3], x[7], x[11], x[15])
-            QUARTERROUND(x[0], x[5], x[10], x[15])
-            QUARTERROUND(x[1], x[6], x[11], x[12])
-            QUARTERROUND(x[2], x[7], x[8], x[13])
-            QUARTERROUND(x[3], x[4], x[9], x[14])
-        }
-        for (int i = 0; i < 16; i++)
-            x[i] += ctx->state[i];
-
-        ++*counter;
-
-        uint64_t bytes = end - c;
-        if (bytes < 64) {
-            memcpy(c, x, bytes);
-            c = end;
-            // Leftover bytes are stored in ctx for next call
-            ctx->uncount = 64 - bytes;
-            memcpy(ctx->unconsumed, (uint8_t*)x + bytes, ctx->uncount);
-            break;
-        }
-        memcpy(c, x, 64);
-        c += 64;
+static inline uint64_t _cha_block(uint8_t out[CHA_BLOCK_SIZE], uint32_t state[16], unsigned rounds) {
+    uint32_t x[16];
+    for (unsigned i = 0; i < 16; ++i) x[i] = state[i];  // Faster than memcpy
+    for (unsigned i = rounds / 2; i-->0;) {
+        // Mix columns, then diagonals
+        for (unsigned j = 0; j < 4; ++j) QUARTERROUND(x[j], x[4 + j], x[8 + j], x[12 + j]);
+        for (unsigned j = 0; j < 4; ++j) QUARTERROUND(x[j], x[4 + (j+1)%4], x[8 + (j+2)%4], x[12 + (j+3)%4]);
     }
-    return c - begin;
+    uint32_t* buf = (uint32_t*)out;
+    for (unsigned i = 0; i < 16; ++i) buf[i] = x[i] + state[i];
+    memset(x, 0, sizeof x);
+    ++*(uint64_t*)(state + 12); // Increment counter
+    return CHA_BLOCK_SIZE;
 }
+
+#undef QUARTERROUND
+#undef QUARTERSTEP
