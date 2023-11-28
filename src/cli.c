@@ -28,6 +28,7 @@ typedef struct thread_args {
     unsigned char* buf;
     unsigned char key[32];
     unsigned workers;
+    unsigned rounds;
     pthread_mutex_t lock;
     pthread_cond_t cond;
     pthread_t thread;
@@ -35,20 +36,22 @@ typedef struct thread_args {
 
 void* producer_thread(void* a) {
     thread_args* args = (thread_args*)a;
-    const uint64_t ivstep = args->workers * BLOCK_SIZE / 64;
+    const uint64_t ivstep = args->workers * BATCH_BLOCKS;
+    cha_ctx ctx;
+    cha_init(&ctx, args->key, default_iv, args->rounds);
+    cha_seek_blocks(&ctx, args->index * BLOCK_SIZE / 64);
     while (!quit) {
         pthread_mutex_lock(&args->lock);
         while (args->done) {
             pthread_cond_wait(&args->cond, &args->lock);
         }
-        unsigned char iv[16];
-        memcpy(iv, default_iv, 16);
-        *(uint64_t*)iv += args->index * ivstep; // Counter increment
-        cha_generate(args->buf, BLOCK_SIZE, args->key, default_iv);
+        cha_update(&ctx, args->buf, BLOCK_SIZE);
+        cha_seek_blocks(&ctx, ivstep);
         args->done = 1;
         pthread_cond_signal(&args->cond);
         pthread_mutex_unlock(&args->lock);
     }
+    cha_wipe(&ctx);
     return NULL;
 }
 
@@ -79,7 +82,7 @@ void print_status(
 
 int fast(
   FILE* f, unsigned workers, uint64_t max_bytes, unsigned char const key[32],
-  unsigned char const iv[16]
+  unsigned char const iv[16], unsigned rounds
 ) {
     thread_args args[workers];
     memset(args, 0, sizeof args);
@@ -87,6 +90,7 @@ int fast(
         args[i].index = i;
         args[i].buf = malloc(BLOCK_SIZE);
         args[i].workers = workers;
+        args[i].rounds = rounds;
         memcpy(args[i].key, key, 32);
         pthread_mutex_init(&args[i].lock, NULL);
         pthread_cond_init(&args[i].cond, NULL);
@@ -160,7 +164,8 @@ void print_hex(unsigned char* buf, size_t len) {
 void help(char** argv) {
     fprintf(
       stderr,
-      "Usage: %s [-t #threads] [-s hexseed] [-b #bytes] [-o outputfile]\n\n",
+      "Usage: %s [-t #threads] [-s hexseed] [-b #bytes] [-c #rounds] [-o "
+      "outputfile]\n\n",
       argv[0]
     );
 }
@@ -169,14 +174,25 @@ int main(int argc, char** argv) {
     unsigned char key[32] = {};
     unsigned char iv[16] = {};
     unsigned int workers = 8;
+    unsigned int rounds = 20;
     char* output = NULL;
     uint64_t max_bytes = 0;
     bool seeded = false;
-    for (char opt; (opt = getopt(argc, argv, "bost")) != -1;) {
+    for (char opt; (opt = getopt(argc, argv, "bostc")) != -1;) {
         if (opt == 't') {
             if (optind >= argc || sscanf(argv[optind++], "%u", &workers) != 1) {
                 fprintf(
                   stderr, "Expected the number of worker threads after -t\n"
+                );
+                return 1;
+            }
+            continue;
+        }
+        if (opt == 'c') {
+            if (optind >= argc || sscanf(argv[optind++], "%u", &rounds) != 1) {
+                fprintf(
+                  stderr,
+                  "Expected the number ChaCha rounds (8, 12 or 20) after -c\n"
                 );
                 return 1;
             }
@@ -250,7 +266,7 @@ int main(int argc, char** argv) {
     }
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
-    int ret = fast(f, workers, max_bytes, key, iv);
+    int ret = fast(f, workers, max_bytes, key, iv, rounds);
     fclose(f);
     return ret;
 }
