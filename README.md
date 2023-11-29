@@ -43,14 +43,14 @@ key = secrets.token_bytes(32)
 # Allocate bytearray and fill with random
 data = generate(1_000_000, key)
 
-# Replace with new random bytes
-generate_into(data)
+# Or into an existing buffer
+generate_into(data, key)
 ```
 
-Or with incremental updates, using only 8 rounds for even higher performance
+Given the same key, the generate functions will on each call produce the same sequence. For incremental updates, create a generator object and extract as many non-identical bytes from it as needed. Re-initializing with the same key of course once again repeats the requence.
 
 ```python
-rng = Cha(key, b"SomeInit", rounds=8)  # IV and rounds optional
+rng = Cha(key)
 
 # Fill some buffer with next bytes iteratively
 rng(data)
@@ -66,7 +66,7 @@ Numpy.Random BitGenerator is also provided for use with Numpy distributions. We 
 import numpy as np
 from nprand import Cha
 
-gen = np.random.Generator(Cha())
+gen = np.random.Generator(Cha())   # System random seeding by default
 gen.normal(size=10)
 ```
 
@@ -85,3 +85,7 @@ All functions and constructors of this module take `rounds` kwarg for adjusting 
 The CLI uses a configurable number of threads for extremely high performance, while the Python and Numpy modules don't - for now at least.
 
 The implementation is optimized for Apple Silicon SIMD (Neon) and x86 CPUs using AVX2 where available, falling back to SSSE3 and ultimately plain C on other platforms. The implementation is loosely based on code from libsodium but runs faster than the library can.
+
+## Seekability
+
+It is possible to seek ChaCha to any byte position in the stream without delay. This is implemented in C API only for now, and is not exposed via Numpy, Python or CLI interfaces.
