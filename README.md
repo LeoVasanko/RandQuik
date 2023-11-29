@@ -1,12 +1,14 @@
-# Extremely fast Cryptographically Secure PRNG
+# The World's Fastest Random Generator
 
 I was disappointed with the sad state of random number generators. Many languages don't ship anything useful and some are stuck with whatever the OS provides. All existing implementations are slow, typically maxing out at a few hundred megabytes per second.
 
-To give some perspective, my tool reaches 37.8 GB/s, writing /dev/null. Several gigabytes per second also on actual SSDs.
+To give some perspective, my tool reaches 37.8 GB/s, writing /dev/null. Several gigabytes per second also on actual SSDs. And this is using full 20 rounds of shuffling.
 
 Secondly, [flaws have been found](https://numpy.org/doc/stable/reference/random/upgrading-pcg64.html) in non-cryptographic algorithms such as the popular Mersenne Twister and PCG64 algorithms.
 
 The cryptographic alternative is simply better, being free of such issues as sequences repeating, and additionally being, well, cryptographically secure. Surprisingly, they appear even to be faster now, so there really ought to be no reason to stick with the old.
+
+We use the widely used encryption algorithm **ChaCha20** as an extremely fast Cryptographically Secure Pseudorandom Number Generator (CSPRNG).
 
 ## CLI: randquik
 
