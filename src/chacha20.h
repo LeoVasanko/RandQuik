@@ -86,7 +86,7 @@ void cha_seek_blocks(cha_ctx* ctx, int64_t offset) {
 /// @param ctx ChaCha context
 /// @param out output buffer
 /// @param outlen output buffer length
-static inline void cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen) {
+void cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen) {
     // The included header will mess with these variables
     uint8_t* end = out + outlen;
     if (ctx->offset) {

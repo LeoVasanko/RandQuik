@@ -64,10 +64,12 @@
         _mm256_storeu_si256((__m256i*)(c + 448), _mm256_permute2x128_si256(x[D], x[D2], 0x31)); \
     }
 
-#define COUNTER_INCREMENT(addv)                              \
-    {                                                                          \
-        orig[12] = _mm256_add_epi32(orig[12], addv);                           \
-        orig[13] = _mm256_add_epi32(orig[13], _mm256_srli_epi32(_mm256_cmpgt_epi32(addv, orig[12]), 31));                           \
+#define COUNTER_INCREMENT(addv)                                                                    \
+    {                                                                                              \
+        __m256i carry = orig[12];                                                                  \
+        orig[12] = _mm256_add_epi32(orig[12], addv);                                               \
+        carry = _mm256_srli_epi32(_mm256_and_si256(_mm256_xor_si256(orig[12], carry), carry), 31); \
+        orig[13] = _mm256_add_epi32(orig[13], carry);                                               \
     }
 
 static inline uint64_t

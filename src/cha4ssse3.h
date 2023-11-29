@@ -4,7 +4,7 @@
 #elif defined(__aarch64__)
 #include "sse2neon.h"
 #endif
-
+#include <stdio.h>
 // clang-format off
 
 #define VEC4_ROT(A, IMM)                                                       \
@@ -45,12 +45,12 @@
         _mm_storeu_si128((__m128i*)(OUT + 192), x[D]);                         \
     }
 
-#define COUNTER_INCREMENT(a, b, c, d)                                          \
+#define COUNTER_INCREMENT(addv)                                                \
     {                                                                          \
-        __m128i addv = _mm_set_epi32(d, c, b, a);                              \
+        __m128i carry = orig[12];                              \
         orig[12] = _mm_add_epi32(orig[12], addv);                              \
-        addv = _mm_srli_epi32(_mm_cmplt_epi32(orig[12], addv), 31);            \
-        orig[13] = _mm_add_epi32(orig[13], addv);                              \
+        carry = _mm_srli_epi32(_mm_and_si128(_mm_xor_si128(orig[12], carry), carry), 31); \
+        orig[13] = _mm_add_epi32(orig[13], carry);                              \
     }
 
 static inline uint64_t
@@ -63,7 +63,9 @@ _cha_4block(uint8_t* buf, size_t bufsize, uint32_t state[16], unsigned rounds) {
     // Load state to vectors, duplicate four times, only different counters
     __m128i orig[16];
     for (unsigned i = 0; i < 16; ++i) orig[i] = _mm_set1_epi32(state[i]);
-    COUNTER_INCREMENT(0, 1, 2, 3);
+    __m128i addv = _mm_set_epi32(3, 2, 1, 0);
+    COUNTER_INCREMENT(addv);
+    addv = _mm_set1_epi32(4);
     const unsigned batches = bufsize / 256;
     for (unsigned b = batches; b-->0;) {
         __m128i x[16];
@@ -85,7 +87,7 @@ _cha_4block(uint8_t* buf, size_t bufsize, uint32_t state[16], unsigned rounds) {
         ONEQUAD(4, 5, 6, 7, buf + 16);
         ONEQUAD(8, 9, 10, 11, buf + 32);
         ONEQUAD(12, 13, 14, 15, buf + 48);
-        COUNTER_INCREMENT(4, 4, 4, 4);
+        COUNTER_INCREMENT(addv);
         buf += 256;
     }
     // Store counter

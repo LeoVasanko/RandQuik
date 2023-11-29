@@ -70,7 +70,7 @@ def _processBuffer(out):
 
 
 class Cha:
-    def __init__(self, key: bytes | Any, iv: bytes | Any, *, rounds=8):
+    def __init__(self, key: bytes | Any, iv: bytes | Any, *, rounds=20):
         """Construct a generator that holds its internal state, moving forward on each call."""
         key, iv = _processKeys(key, iv)
         self.ctx = ffi.new("cha_ctx*")
@@ -91,7 +91,7 @@ def generate_into(
     key: bytes | Any,
     iv: bytes | Any = bytes(16),
     *,
-    rounds=8,
+    rounds=20,
 ):
     """Fill in random bytes into an existing array (buffer interface)"""
     key, iv = _processKeys(key, iv)
@@ -100,7 +100,7 @@ def generate_into(
     return out
 
 
-def generate(outlen: int, key: bytes | Any, iv: bytes | Any = bytes(16), *, rounds=8):
+def generate(outlen: int, key: bytes | Any, iv: bytes | Any = bytes(16), *, rounds=20):
     """Return a bytearray of random bytes"""
     assert outlen >= 0
     return generate_into(bytearray(outlen), key, iv, rounds=rounds)
