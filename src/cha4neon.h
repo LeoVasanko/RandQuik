@@ -31,8 +31,8 @@
         uint32x4x2_t ab = vtrnq_u32(x[A], x[B]); \
         uint32x4x2_t cd = vtrnq_u32(x[C], x[D]); \
         x[A] = vcombine_u32(vget_low_u32(ab.val[0]), vget_low_u32(cd.val[0])); \
-        x[B] = vcombine_u32(vget_high_u32(ab.val[0]), vget_high_u32(cd.val[0])); \
-        x[C] = vcombine_u32(vget_low_u32(ab.val[1]), vget_low_u32(cd.val[1])); \
+        x[B] = vcombine_u32(vget_low_u32(ab.val[1]), vget_low_u32(cd.val[1])); \
+        x[C] = vcombine_u32(vget_high_u32(ab.val[0]), vget_high_u32(cd.val[0])); \
         x[D] = vcombine_u32(vget_high_u32(ab.val[1]), vget_high_u32(cd.val[1])); \
         /* Write out 1/4 of each block */                                      \
         vst1q_u32((uint32_t*)(OUT), x[A]);                               \
@@ -50,17 +50,22 @@
 static inline uint64_t
 _cha_4block(uint8_t* buf, size_t bufsize, uint32_t state[16], unsigned rounds) {
     /* constant for shuffling bytes (replacing multiple-of-8 rotates) */
-    static const uint8_t _rot16a[] = {13, 12, 15, 14, 9, 8, 11, 10, 5, 4, 7, 6, 1, 0, 3, 2};
-    static const uint8_t _rot8a[] = {14, 13, 12, 15, 10, 9, 8, 11, 6, 5, 4, 7, 2, 1, 0, 3};
-    const uint8x16_t rot16 = vld1q_u8(_rot16a);
-    const uint8x16_t rot8 = vld1q_u8(_rot8a);
+    const uint8x16_t rot16 = {
+      2, 3, 0, 1,
+      6, 7, 4, 5,
+      10, 11, 8, 9,
+      14, 15, 12, 13
+    };
+    const uint8x16_t rot8= {
+      3, 0, 1, 2,
+      7, 4, 5, 6,
+      11, 8, 9, 10,
+      15, 12, 13, 14
+    };
     // Load state to vectors, duplicate four times, only different counters
     uint32x4_t orig[16];
     for (unsigned i = 0; i < 16; ++i) orig[i] = vdupq_n_u32(state[i]);
-    uint32x4_t addv = vdupq_n_u32(0);
-    addv = vsetq_lane_u32(1, addv, 1);
-    addv = vsetq_lane_u32(2, addv, 2);
-    addv = vsetq_lane_u32(3, addv, 3);
+    uint32x4_t addv = { 0, 1, 2, 3 };
     COUNTER_INCREMENT(addv);
     addv = vdupq_n_u32(4);
     const unsigned batches = bufsize / 256;
