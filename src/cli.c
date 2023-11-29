@@ -136,7 +136,7 @@ int fast(
         pthread_cond_destroy(&args[i].cond);
         free(args[i].buf);
     }
-    fprintf(stderr, "\nRandQuik wrote %lu bytes!\n\n", bytes);
+    fprintf(stderr, "\nRandQuik wrote %llu bytes!\n\n", bytes);
     return 0;
 }
 
@@ -164,7 +164,7 @@ void print_hex(unsigned char* buf, size_t len) {
 void help(char** argv) {
     fprintf(
       stderr,
-      "Usage: %s [-t #threads] [-s hexseed] [-b #bytes] [-c #rounds] [-o "
+      "Usage: %s [-t #threads] [-s hexseed] [-b #bytes] [-r #rounds] [-o "
       "outputfile]\n\n",
       argv[0]
     );
@@ -178,7 +178,7 @@ int main(int argc, char** argv) {
     char* output = NULL;
     uint64_t max_bytes = 0;
     bool seeded = false;
-    for (char opt; (opt = getopt(argc, argv, "bostc")) != -1;) {
+    for (char opt; (opt = getopt(argc, argv, "bostr")) != -1;) {
         if (opt == 't') {
             if (optind >= argc || sscanf(argv[optind++], "%u", &workers) != 1) {
                 fprintf(
@@ -188,11 +188,11 @@ int main(int argc, char** argv) {
             }
             continue;
         }
-        if (opt == 'c') {
+        if (opt == 'r') {
             if (optind >= argc || sscanf(argv[optind++], "%u", &rounds) != 1) {
                 fprintf(
                   stderr,
-                  "Expected the number ChaCha rounds (8, 12 or 20) after -c\n"
+                  "Expected the number ChaCha rounds (8, 12 or 20) after -r\n"
                 );
                 return 1;
             }
@@ -217,7 +217,7 @@ int main(int argc, char** argv) {
             continue;
         }
         if (opt == 'b') {
-            if (optind >= argc || sscanf(argv[optind++], "%lu", &max_bytes) != 1) {
+            if (optind >= argc || sscanf(argv[optind++], "%llu", &max_bytes) != 1) {
                 fprintf(
                   stderr,
                   "Expected a maximum number of bytes to read after -b\n"

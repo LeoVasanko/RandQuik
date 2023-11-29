@@ -11,13 +11,13 @@
 #pragma GCC target("ssse3")
 #pragma GCC target("avx2")
 #endif
-#include "cha4block.h"
-#include "cha8block.h"
+#include "cha4ssse3.h"
+#include "cha8avx2.h"
 #elif defined(__aarch64__)
-#include "cha4block.h"
+#include "cha4neon.h"
 #endif
 
-#include "cha1block.h"
+#include "cha1c.h"
 
 #include <assert.h>
 #include <stdbool.h>
