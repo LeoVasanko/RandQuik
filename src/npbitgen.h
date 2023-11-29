@@ -7,7 +7,7 @@ static uint64_t cha_uint64(void* st) {
         ctx->end =
           ctx->gen(ctx->unconsumed, BATCH_SIZE, ctx->state, ctx->rounds);
     }
-    register uint64_t ret = *(uint64_t*)(ctx->unconsumed + ctx->offset);
+    uint64_t ret = *(uint64_t*)(ctx->unconsumed + ctx->offset);
     ctx->offset += sizeof(uint64_t);
     return ret;
 }
