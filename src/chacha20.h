@@ -11,12 +11,13 @@
 #pragma GCC target("ssse3")
 #pragma GCC target("avx2")
 #endif
+#include "cha4block.h"
 #include "cha8block.h"
-#else
+#elif defined(__aarch64__)
+#include "cha4block.h"
 #endif
 
 #include "cha1block.h"
-#include "cha4block.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -28,11 +29,15 @@
 #include <time.h>
 #include <unistd.h>
 
+typedef uint64_t (*genfunc)(
+  uint8_t* out, size_t outsize, uint32_t state[16], unsigned rounds
+);
 typedef struct cha_ctx {
     uint32_t state[16];
     uint8_t unconsumed[BATCH_SIZE];
     uint32_t offset, end;
     unsigned rounds;
+    genfunc gen;
 } cha_ctx;
 
 /// @brief Initialize cha_ctx
@@ -52,6 +57,18 @@ void cha_init(
     memset(ctx->unconsumed, 0, sizeof ctx->unconsumed);
     ctx->offset = ctx->end = 0;
     ctx->rounds = rounds;
+#if defined(__x86_64__)
+    if (__builtin_cpu_supports("avx2"))
+        ctx->gen = _cha_8block;
+    else if (__builtin_cpu_supports("ssse3"))
+        ctx->gen = _cha_4block;
+    else
+        ctx->gen = _cha_block;
+#elif defined(__aarch64__)
+    ctx->gen = _cha_4block;
+#else
+    ctx->gen = _cha_block;
+#endif
 }
 
 /// Dispose of sensitive data within the context
@@ -65,39 +82,18 @@ void cha_seek_blocks(cha_ctx* ctx, int64_t offset) {
     ctx->offset = ctx->end = 0;
 }
 
-uint64_t cha_generate_batch(
-  uint8_t* out, size_t outsize, uint32_t* state, unsigned rounds
-) {
-#if defined(__x86_64__)
-    if (__builtin_cpu_supports("ssse3")) {
-        if (__builtin_cpu_supports("avx2")) {
-            return _cha_8block(out, outsize, state, rounds);
-        }
-        return _cha_4block(out, outsize, state, rounds);
-    }
-#elif defined(__aarch64__)
-    return _cha_4block(out, outsize, state);
-#endif
-    unsigned count = 0;
-    unsigned n = _cha_block(out, state, rounds);
-    count += n;
-    out += n;
-    return count;
-}
-
 /// @brief Incremental generation, keeps state between calls
 /// @param ctx ChaCha context
 /// @param out output buffer
 /// @param outlen output buffer length
-void cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen) {
+static inline void cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen) {
     // The included header will mess with these variables
     uint8_t* end = out + outlen;
     if (ctx->offset) {
         // Need to generate stored buffer?
         if (ctx->end == 0)
-            ctx->end = cha_generate_batch(
-              ctx->unconsumed, BATCH_SIZE, ctx->state, ctx->rounds
-            );
+            ctx->end =
+              ctx->gen(ctx->unconsumed, BATCH_SIZE, ctx->state, ctx->rounds);
         // Deliver stored bytes first
         uint64_t N = ctx->end - ctx->offset;
         if (N > outlen)
@@ -105,15 +101,16 @@ void cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen) {
         memcpy(out, ctx->unconsumed + ctx->offset, N);
         ctx->offset += N;
         out += N;
+        if (ctx->offset == ctx->end)
+            ctx->offset = ctx->end = 0;
         if (out == end)
             return;
     }
-    out += cha_generate_batch(out, end - out, ctx->state, ctx->rounds);
+    out += ctx->gen(out, end - out, ctx->state, ctx->rounds);
     const uint32_t N = end - out;
     if (N) {
-        ctx->end = cha_generate_batch(
-          ctx->unconsumed, BATCH_SIZE, ctx->state, ctx->rounds
-        );
+        ctx->end =
+          ctx->gen(ctx->unconsumed, BATCH_SIZE, ctx->state, ctx->rounds);
         memcpy(out, ctx->unconsumed, N);
         ctx->offset = N;
     }
@@ -125,10 +122,11 @@ void cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen) {
 /// @param key 32 byte key
 /// @param iv 16 bytes, where normally initial 4-8 bytes are 0 (counter)
 void cha_generate(
-  uint8_t* out, uint64_t outlen, const uint8_t key[32], const uint8_t iv[16]
+  uint8_t* out, uint64_t outlen, const uint8_t key[32], const uint8_t iv[16],
+  unsigned rounds
 ) {
     cha_ctx ctx;
-    cha_init(&ctx, key, iv, 20);
+    cha_init(&ctx, key, iv, rounds);
     cha_update(&ctx, out, outlen);
     cha_wipe(&ctx);
 }

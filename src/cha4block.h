@@ -1,5 +1,6 @@
 #if defined(__x86_64__)
 #include <emmintrin.h> // SSE2
+#include <tmmintrin.h> // SSSE3
 #elif defined(__aarch64__)
 #include "sse2neon.h"
 #endif
@@ -21,7 +22,7 @@
     x[C] = _mm_add_epi32(x[C], x[D]);                                          \
     x[B] = VEC4_ROT(_mm_xor_si128(x[B], x[C]), 7)
 
-#define ONEQUAD(A, B, C, D, CT)                                                \
+#define ONEQUAD(A, B, C, D, OUT)                                                \
     {                                                                          \
         /* Add original block */                                               \
         x[A] = _mm_add_epi32(x[A], orig[A]);                                   \
@@ -37,11 +38,11 @@
         x[B] = _mm_unpackhi_epi64(abl, cdl); /* a1 b1 c1 d1 */                 \
         x[C] = _mm_unpacklo_epi64(abh, cdh); /* a2 b2 c2 d2 */                 \
         x[D] = _mm_unpackhi_epi64(abh, cdh); /* a3 b3 c3 d3 */                 \
-                                                                               \
-        _mm_storeu_si128((__m128i*)(CT), x[A]);                                \
-        _mm_storeu_si128((__m128i*)(CT + 64), x[B]);                           \
-        _mm_storeu_si128((__m128i*)(CT + 128), x[C]);                          \
-        _mm_storeu_si128((__m128i*)(CT + 192), x[D]);                          \
+        /* Write out 1/4 of each block */                                      \
+        _mm_storeu_si128((__m128i*)(OUT), x[A]);                               \
+        _mm_storeu_si128((__m128i*)(OUT + 64), x[B]);                          \
+        _mm_storeu_si128((__m128i*)(OUT + 128), x[C]);                         \
+        _mm_storeu_si128((__m128i*)(OUT + 192), x[D]);                         \
     }
 
 #define COUNTER_INCREMENT(a, b, c, d)                                          \
@@ -87,7 +88,7 @@ _cha_4block(uint8_t* buf, size_t bufsize, uint32_t state[16], unsigned rounds) {
         COUNTER_INCREMENT(4, 4, 4, 4);
         buf += 256;
     }
-    // Update counter
+    // Store counter
     state[12] = _mm_cvtsi128_si32(orig[12]);
     state[13] = _mm_cvtsi128_si32(orig[13]);
     return batches * 256;

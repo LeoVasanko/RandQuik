@@ -12,15 +12,20 @@ if not src.is_dir():
 ffi = cffi.FFI()
 ffi.cdef(
     """
+    typedef uint64_t (*genfunc)(
+        uint8_t* out, size_t outsize, uint32_t state[16], unsigned rounds
+    );
     typedef struct cha_ctx {
         uint32_t input[16];
-        uint8_t unconsumed[64];
-        uint8_t uncount;
+        uint8_t unconsumed[512];
+        uint32_t offset, end;
+        unsigned rounds;
+        genfunc gen;
     } cha_ctx;
 
-    int cha_generate(uint8_t* out, uint64_t outlen, const uint8_t key[32], const uint8_t iv[16]);
+    int cha_generate(uint8_t* out, uint64_t outlen, const uint8_t key[32], const uint8_t iv[16], unsigned rounds);
 
-    void cha_init(cha_ctx* ctx, const uint8_t* key, const uint8_t* iv);
+    void cha_init(cha_ctx* ctx, const uint8_t* key, const uint8_t* iv, unsigned rounds);
     void cha_wipe(cha_ctx* ctx);
     int cha_update(cha_ctx* ctx, uint8_t* out, uint64_t outlen);
     """
@@ -65,11 +70,11 @@ def _processBuffer(out):
 
 
 class Cha:
-    def __init__(self, key: bytes | Any, iv: bytes | Any):
+    def __init__(self, key: bytes | Any, iv: bytes | Any, *, rounds=8):
         """Construct a generator that holds its internal state, moving forward on each call."""
         key, iv = _processKeys(key, iv)
         self.ctx = ffi.new("cha_ctx*")
-        lib.cha_init(self.ctx, key, iv)
+        lib.cha_init(self.ctx, key, iv, rounds)
 
     def __del__(self):
         lib.cha_wipe(self.ctx)
@@ -82,15 +87,20 @@ class Cha:
 
 
 def generate_into(
-    out: bytearray | memoryview | Any, key: bytes | Any, iv: bytes | Any = bytes(16)
+    out: bytearray | memoryview | Any,
+    key: bytes | Any,
+    iv: bytes | Any = bytes(16),
+    *,
+    rounds=8,
 ):
     """Fill in random bytes into an existing array (buffer interface)"""
     key, iv = _processKeys(key, iv)
     outbuf, outlen = _processBuffer(out)
-    lib.cha_generate(outbuf, outlen, key, iv)
+    lib.cha_generate(outbuf, outlen, key, iv, rounds)
     return out
 
 
-def generate(outlen: int, key: bytes | Any, iv: bytes | Any = bytes(16)):
+def generate(outlen: int, key: bytes | Any, iv: bytes | Any = bytes(16), *, rounds=8):
     """Return a bytearray of random bytes"""
-    return generate_into(bytearray(outlen), key, iv)
+    assert outlen >= 0
+    return generate_into(bytearray(outlen), key, iv, rounds=rounds)

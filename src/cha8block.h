@@ -1,5 +1,4 @@
 #include <immintrin.h> // AVX2
-#include <tmmintrin.h> // SSSE3
 
 // clang-format off
 
@@ -53,16 +52,16 @@
 
 #define ONEOCTO(A, B, C, D, A2, B2, C2, D2, c)                                 \
     {                                                                          \
-        TRANSPOSE(A, B, C, D);                                             \
-        TRANSPOSE(A2, B2, C2, D2);                                         \
-        _mm256_storeu_si256((__m256i*)(c), _mm256_permute2x128_si256(x[A], x[A2], 0x20));                              \
-        _mm256_storeu_si256((__m256i*)(c + 64), _mm256_permute2x128_si256(x[B], x[B2], 0x20));                         \
-        _mm256_storeu_si256((__m256i*)(c + 128), _mm256_permute2x128_si256(x[C], x[C2], 0x20));                        \
-        _mm256_storeu_si256((__m256i*)(c + 192), _mm256_permute2x128_si256(x[D], x[D2], 0x20));                        \
-        _mm256_storeu_si256((__m256i*)(c + 256), _mm256_permute2x128_si256(x[A], x[A2], 0x31));                       \
-        _mm256_storeu_si256((__m256i*)(c + 320), _mm256_permute2x128_si256(x[B], x[B2], 0x31));                       \
-        _mm256_storeu_si256((__m256i*)(c + 384), _mm256_permute2x128_si256(x[C], x[C2], 0x31));                       \
-        _mm256_storeu_si256((__m256i*)(c + 448), _mm256_permute2x128_si256(x[D], x[D2], 0x31));                       \
+        TRANSPOSE(A, B, C, D);                                                 \
+        TRANSPOSE(A2, B2, C2, D2);                                             \
+        _mm256_storeu_si256((__m256i*)(c), _mm256_permute2x128_si256(x[A], x[A2], 0x20));       \
+        _mm256_storeu_si256((__m256i*)(c + 64), _mm256_permute2x128_si256(x[B], x[B2], 0x20));  \
+        _mm256_storeu_si256((__m256i*)(c + 128), _mm256_permute2x128_si256(x[C], x[C2], 0x20)); \
+        _mm256_storeu_si256((__m256i*)(c + 192), _mm256_permute2x128_si256(x[D], x[D2], 0x20)); \
+        _mm256_storeu_si256((__m256i*)(c + 256), _mm256_permute2x128_si256(x[A], x[A2], 0x31)); \
+        _mm256_storeu_si256((__m256i*)(c + 320), _mm256_permute2x128_si256(x[B], x[B2], 0x31)); \
+        _mm256_storeu_si256((__m256i*)(c + 384), _mm256_permute2x128_si256(x[C], x[C2], 0x31)); \
+        _mm256_storeu_si256((__m256i*)(c + 448), _mm256_permute2x128_si256(x[D], x[D2], 0x31)); \
     }
 
 #define COUNTER_INCREMENT(addv)                              \

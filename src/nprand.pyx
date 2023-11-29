@@ -15,10 +15,11 @@ np.import_array()
 cdef extern from "npbitgen.h":
     struct cha_ctx:
         uint32_t state[16]
-        uint8_t unconsumed[64]
-        uint8_t uncount
+        uint8_t unconsumed[512]
+        uint32_t offset, end;
+        unsigned rounds;
 
-    void cha_init(cha_ctx* ctx, const uint8_t* key, const uint8_t* iv) nogil
+    void cha_init(cha_ctx* ctx, const uint8_t* key, const uint8_t* iv, unsigned rounds) nogil
     uint64_t cha_uint64(void *state) nogil
     uint32_t cha_uint32(void *state) nogil
     double cha_double(void *state) nogil
@@ -27,7 +28,7 @@ cdef class Cha(BitGenerator):
 
     cdef cha_ctx rng_state
 
-    def __init__(self, seed=None):
+    def __init__(self, seed=None, rounds=8):
         BitGenerator.__init__(self, seed)
         self._bitgen.state = <void *>&self.rng_state
         self._bitgen.next_uint64 = &cha_uint64
@@ -36,4 +37,4 @@ cdef class Cha(BitGenerator):
         self._bitgen.next_raw = &cha_uint64
         # Generated state is ChaCha20 key
         key = self._seed_seq.generate_state(4, np.uint64)
-        cha_init(&self.rng_state, <uint8_t *>np.PyArray_DATA(key), b"NumpRand")
+        cha_init(&self.rng_state, <uint8_t *>np.PyArray_DATA(key), b"NumpRand", rounds)
