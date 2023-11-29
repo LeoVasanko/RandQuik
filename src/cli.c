@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -136,7 +137,7 @@ int fast(
         pthread_cond_destroy(&args[i].cond);
         free(args[i].buf);
     }
-    fprintf(stderr, "\nRandQuik wrote %llu bytes!\n\n", bytes);
+    fprintf(stderr, "\nRandQuik wrote %" PRIu64 " bytes!\n\n", bytes);
     return 0;
 }
 
@@ -217,13 +218,30 @@ int main(int argc, char** argv) {
             continue;
         }
         if (opt == 'b') {
-            if (optind >= argc || sscanf(argv[optind++], "%llu", &max_bytes) != 1) {
+            char unit[16] = {};
+            if (optind >= argc || sscanf(argv[optind++], "%" SCNu64 "%15s", &max_bytes, unit) < 1) {
                 fprintf(
                   stderr,
                   "Expected a maximum number of bytes to read after -b\n"
                 );
                 return 1;
             }
+            if (strcasecmp(unit, "k") == 0 || strcasecmp(unit, "kb") == 0)
+                max_bytes *= 1000ull;
+            else if (strcasecmp(unit, "m") == 0 || strcasecmp(unit, "mb") == 0)
+                max_bytes *= 1000000ull;
+            else if (strcasecmp(unit, "g") == 0 || strcasecmp(unit, "gb") == 0)
+                max_bytes *= 1000000000ull;
+            else if (strcasecmp(unit, "t") == 0 || strcasecmp(unit, "tb") == 0)
+                max_bytes *= 1000000000000ull;
+            else if (strcasecmp(unit, "ki") == 0 || strcasecmp(unit, "kib") == 0)
+                max_bytes <<= 10;
+            else if (strcasecmp(unit, "mi") == 0 || strcasecmp(unit, "mib") == 0)
+                max_bytes <<= 20;
+            else if (strcasecmp(unit, "gi") == 0 || strcasecmp(unit, "gib") == 0)
+                max_bytes <<= 30;
+            else if (strcasecmp(unit, "ti") == 0 || strcasecmp(unit, "tib") == 0)
+                max_bytes <<= 40;
             continue;
         }
         help(argv);
@@ -258,9 +276,14 @@ int main(int argc, char** argv) {
         fclose(urand);
         fprintf(
           stderr,
-          "Random seed generated. This sequence may be repeated by:\n%s -s ",
+          "Random seed generated. This sequence may be repeated by:\n%s ",
           argv[0]
         );
+        if (rounds != 20)
+            fprintf(stderr, "-r %u -s ", rounds);
+        else
+            fprintf(stderr, "-s ");
+
         print_hex(key, 32);
         fprintf(stderr, "\n\n");
     }
