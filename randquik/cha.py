@@ -57,8 +57,6 @@ def _processKeys(key, iv):
 
 
 def _processBuffer(out):
-    if not out:
-        raise ValueError("Output buffer of non-zero size is required")
     try:
         outlen = out.nbytes
     except AttributeError:
