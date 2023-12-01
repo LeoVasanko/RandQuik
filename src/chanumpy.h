@@ -1,9 +1,9 @@
-#include "chacha20.h"
+#include "charandom.h"
 
 static uint64_t cha_uint64(void* st) {
     cha_ctx* ctx = (cha_ctx*)st;
-    if (ctx->offset == ctx->end) {
-        ctx->offset = 0;
+    if (ctx->offset + sizeof(uint64_t) > ctx->end) {
+        ctx->offset -= ctx->end;
         ctx->end =
           ctx->gen(ctx->unconsumed, BATCH_SIZE, ctx->state, ctx->rounds);
     }
@@ -13,5 +13,6 @@ static uint64_t cha_uint64(void* st) {
 }
 static uint32_t cha_uint32(void* st) { return cha_uint64(st); }
 static double cha_double(void* st) {
-    return cha_uint64(st) / (UINT64_MAX + 1.0);
+    // Fast uint64_to_double conversion from numpy/random/_common.pxd
+    return (cha_uint64(st) >> 11) * (1.0 / 9007199254740992.0);
 }

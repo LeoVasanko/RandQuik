@@ -75,11 +75,31 @@ void cha_init(
 void cha_wipe(cha_ctx* ctx) { memset(ctx, 0, sizeof(cha_ctx)); }
 
 /// @brief Advance or rewind the stream to any arbitrary location
+/// Keeps byte offset inside batch untouched but clears the buffer
 /// @param ctx ChaCha context
 /// @param offset Offset in blocks of 64 bytes (counter change)
 void cha_seek_blocks(cha_ctx* ctx, int64_t offset) {
-    *(uint64_t*)(ctx->state + 12) += offset;
-    ctx->offset = ctx->end = 0;
+    *(uint64_t*)(ctx->state + 12) += offset - (int64_t)ctx->end / 64;
+    ctx->end = 0;
+}
+
+/// @brief Seek a number of bytes forward or backward in stream
+/// Supports seeking backwards and forwards, even beyond start, but only up to
+/// 64 bit distance which does not cover the whole counter range.
+/// @param ctx ChaCha context
+/// @param offset Positive or negative offset from current byte position
+void cha_seek(cha_ctx* ctx, int64_t offset) {
+    offset += (int64_t)ctx->offset;
+    ctx->offset = ((offset % 64) + 64) % 64;
+    cha_seek_blocks(ctx, (offset - (int64_t)ctx->offset) / 64);
+}
+
+/// @brief Tell current byte position in stream (assuming initial counter 0).
+/// Result is truncated to int64 range (positive or negative)
+/// @param ctx ChaCha context
+int64_t cha_tell(cha_ctx* ctx) {
+    int64_t counter = *(int64_t*)(ctx->state + 12);
+    return counter * CHA_BLOCK_SIZE + ctx->offset - ctx->end;
 }
 
 /// @brief Incremental generation, keeps state between calls
