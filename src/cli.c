@@ -10,7 +10,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "chacha20.h"
+#include "charandom.h"
 
 static volatile bool quit = false;
 
