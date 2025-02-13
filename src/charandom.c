@@ -1,3 +1,3 @@
-#include "chacha20.h"
+#include "charandom.h"
 
 // Library build for Python CFFI to use
