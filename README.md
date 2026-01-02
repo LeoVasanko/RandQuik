@@ -62,12 +62,6 @@ Many options such as `--len`, `--seek` accept human-readable units. The table us
 | 1PB     | 1PiB        | Petabyte / pebibyte    | 1_000_... / 1_125_... |
 | —       | 1sect       | Sectors of output device | 512 (typical), 4096 (rarely) |
 
-Notes:
-- Units are case-insensitive on input: `1GiB`, `1gib`, `1gi`, and `1giB` are all accepted.
-- The trailing `B` is optional for parsing (`1g` and `1gb` are equivalent).
-- Underscores are ignored, so `1_000Mi` works the same as `1000Mi`.
-- `sect` uses the sector size of the output path when available, otherwise 512 bytes.
-
 ### Seeding for repeatable output
 
 You can provide an explicit seed string, always providing the same output, which can be useful e.g. for memory/disk testing where the data needs to be read back and verified.
@@ -76,7 +70,7 @@ You can provide an explicit seed string, always providing the same output, which
 randquik -l 64MiB -s my-seed-string -o chunk.bin
 ```
 
-If no seed is provided, a secure random one will be generated and printed on console (unless hidden by `-q`).
+If no seed is provided, a secure new random one is created and printed on console (unless hidden by `-q`).
 
 ### Seekable random stream and output file
 

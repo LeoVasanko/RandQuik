@@ -76,7 +76,8 @@ def _open_output(
     required_size = oseek + (total_bytes if total_bytes is not None else 0)
     current_size = os.fstat(fd).st_size
     if required_size > current_size:
-        os.ftruncate(fd, required_size)
+        with contextlib.suppress(OSError):
+            os.ftruncate(fd, required_size)
 
     # Seek to output position
     if oseek > 0:
