@@ -1,0 +1,65 @@
+[project]
+name = "randquik"
+dynamic = ["version"]
+description = "CLI tool for extremely fast random bytes."
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [
+    { name = "Leo Vasanko" }
+]
+keywords = ["random", "CSPRNG", "AEGIS", "shred", "benchmark"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "aeg>=0.4.3",
+]
+
+[project.scripts]
+randquik = "randquik.cli:main"
+
+[project.urls]
+Homepage = "https://git.zi.fi/LeoVasanko/randquik"
+Repository = "https://github.com/LeoVasanko/randquik"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+local_scheme = "no-local-version"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "randquik/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["randquik"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "PTH", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["randquik"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

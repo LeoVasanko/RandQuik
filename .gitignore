@@ -1,0 +1,7 @@
+.*
+*.lock
+*.egg-info
+/dist
+/build
+__pycache__
+!.gitignore
