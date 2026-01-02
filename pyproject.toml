@@ -34,32 +34,9 @@ build-backend = "hatchling.build"
 [tool.hatch.version]
 source = "vcs"
 
-[tool.hatch.version.raw-options]
-local_scheme = "no-local-version"
-
-[tool.hatch.build.hooks.vcs]
-version-file = "randquik/_version.py"
-
-[tool.hatch.build.targets.wheel]
-packages = ["randquik"]
-
 [tool.ruff]
 line-length = 100
 target-version = "py313"
 
-[tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "PTH", "RUF"]
-ignore = ["E501"]
-
 [tool.ruff.lint.isort]
 known-first-party = ["randquik"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-
-[tool.mypy]
-python_version = "3.13"
-warn_return_any = true
-warn_unused_configs = true
-ignore_missing_imports = true

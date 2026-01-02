@@ -8,7 +8,6 @@ import sys
 import time
 
 import aeg
-import tracerite
 
 from randquik.benchmark import run_benchmark
 from randquik.crypto import derive_key, generate_random_seed
@@ -23,8 +22,6 @@ from randquik.workers import (
     FdProducer,
     MmapProducer,
 )
-
-tracerite.load()
 
 __all__ = ["main"]
 
@@ -261,15 +258,20 @@ def _main():
                 producer.join()
             finally:
                 progress.stop()
-                producer.cleanup()
         elapsed = time.perf_counter() - start_time
         if not args.quiet:
             print_summary(producer.written, elapsed, "wrote", seed=seed_for_display)
+        if args.verbose:
+            stats = producer.get_combined_stats()
+            print(stats.format_report(f"Workers (×{workers})"), file=sys.stderr)
+        producer.cleanup()
         return
 
     # Standard file mode with ring buffers
     with open_fd(args.output, total_bytes, dry=args.dry, oseek=oseek) as fd:
-        producer = FdProducer(workers, key, ciph, total_bytes, fd, dry=args.dry, iseek=iseek)
+        producer = FdProducer(
+            workers, key, ciph, total_bytes, fd, dry=args.dry, iseek=iseek, profile=args.verbose
+        )
 
         if args.verbose:
             dry_str = " (dry run)" if args.dry else ""
@@ -292,6 +294,8 @@ def _main():
             elapsed = time.perf_counter() - start_time
             if not args.quiet:
                 print_summary(producer.written, elapsed, "wrote", seed=seed_for_display)
+            if args.verbose:
+                print(producer.format_stats_report(), file=sys.stderr)
 
 
 def main():
