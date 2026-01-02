@@ -1,0 +1,125 @@
+# The World's Fastest Random Generator v2
+
+I was disappointed with the sad state of random number generators. Many languages don't ship anything useful and some are stuck with whatever the OS provides. Most existing implementations are slow, often maxing out at a few hundred megabytes per second, which becomes a real bottleneck in high-throughput systems.
+
+Secondly, [flaws have been found](https://numpy.org/doc/stable/reference/random/upgrading-pcg64.html) in popular non-cryptographic algorithms such as Mersenne Twister and PCG-style generators. These issues range from detectable structure to repeating sequences, making them unsuitable for serious or long-running workloads.
+
+The cryptographic alternative is simply better. Proper CSPRNGs avoid these pitfalls entirely and, on modern hardware, can now be *faster* than legacy non-cryptographic designs. There is little reason left to accept weaker guarantees for worse performance.
+
+This version uses **AEGIS**, a modern authenticated encryption primitive that leverages AES hardware acceleration. AEGIS provides extremely high throughput while retaining strong cryptographic properties, significantly outperforming our Legacy implementation and serving as an ideal foundation for a high-performance CSPRNG.
+
+## Quick start
+
+Install [UV](https://docs.astral.sh/uv/install/) and install the CLI tool with it:
+
+```sh
+uv tool install randquik
+```
+
+Now you can create random data with it:
+```sh
+randquik -t8 --len 1TB > /dev/null
+```
+
+You can try how it performs on your machine in different scenarios with:
+```sh
+randquik --benchmark
+```
+
+Wipe an entire file without altering its size:
+```sh
+randquik -o sensitive.dat
+```
+
+Piping and redirection:
+```sh
+randquik | hexdump -C | head
+```
+
+
+
+## Features
+
+- Blazing-fast CSPRNG built on AEGIS single or multithreaded
+- Deterministic seeding: same seed, same byte stream
+- Seekable random stream and file output
+- Flexible I/O: piping, files, and `mmap`
+- Built-in benchmarking and dry-run modes
+- Full screen console graphics for speed display
+
+Below are the most important features with example commands.
+
+### Performance
+
+You'll be looking at up to 100 GB/s raw generation speed, making this some orders of magnitude faster than your traditional random number generation. Single-threaded performance still is 10-20 times faster than other options that don't have threading.
+
+Your output, e.g. writing a file, will always be the bottle neck, not your random generator, but modern SSDs allow up to 10 GB/s write speeds already.
+
+### Size units
+
+Many options such as `--len`, `--seek` accept human-readable units. The table uses conventional, capitalized forms (e.g. `KiB`, `MB`), but you may write them in lower case and with or without the trailing `B` (for example `1m` or `5gi`).
+
+| SI unit | Binary unit | Meaning                 | Bytes factor          |
+|--------:|------------:|------------------------|-----------------------|
+| 100     | —           | 100 bytes              | 1                     |
+| 1kB     | 1KiB        | Kilobyte / kibibyte    | 1_000 / 1_024         |
+| 1MB     | 1MiB        | Megabyte / mebibyte    | 1_000_000 / 1_048_576 |
+| 1GB     | 1GiB        | Gigabyte / gibibyte    | 1_000_000_000 / 1_073_741_824 |
+| 1TB     | 1TiB        | Terabyte / tebibyte    | 1_000_000_000_000 / 1_099_511_627_776 |
+| 1PB     | 1PiB        | Petabyte / pebibyte    | 1_000_... / 1_125_... |
+| —       | 1sect       | Sectors of output device | 512 (typical), 4096 (rarely) |
+
+Notes:
+- Units are case-insensitive on input: `1GiB`, `1gib`, `1gi`, and `1giB` are all accepted.
+- The trailing `B` is optional for parsing (`1g` and `1gb` are equivalent).
+- Underscores are ignored, so `1_000Mi` works the same as `1000Mi`.
+- `sect` uses the sector size of the output path when available, otherwise 512 bytes.
+
+### 2. Deterministic seeding
+
+You can provide an explicit seed string. The same seed, length, and options will always produce the same output bytes:
+```sh
+randquik -l 64MiB -s my-seed-string -o chunk.bin
+```
+
+This is useful for reproducible tests or simulations.
+
+### 4. Seekable stream and file
+
+It is possible to seek to any byte position in the stream without delay.
+
+- `--iseek`: seek the input random stream
+- `--oseek`: seek in the output file
+- `--seek`: set both input and output seek to the same position
+
+Example: resume as if 5 terabytes had already been written, and continue writing to `out.dat`:
+```sh
+randquik --seek 5T --len 1G -o out.dat
+```
+
+Bytes prior to seek position are kept as they were while the file is expanded to fit all the data starting at five terabytes mark (using sparse allocation so it doesn't actually consume 5 terabytes).
+
+Wipe all data on a disk (e.g. USB drive) but keep the partition table:
+```sh
+randquik -oseek 2048sect -o /dev/sde
+```
+
+### 6. Benchmark and dry-run modes
+
+Benchmark different modes and thread counts. Prints the options that perform the best on your system:
+```sh
+randquik --benchmark
+```
+
+To do a single run without actually writing bytes to disk or anywhere, use `--dry`:
+```sh
+randquik --len 50GiB -t8 --dry
+```
+
+## Legacy
+
+The original implementation is preserved in the `legacy` git branch.
+
+That version was once the fastest CSPRNG available, built around ChaCha20 with SIMD Assembly and C code written by me. While historically significant, it has been greatly surpassed by the current AEGIS-based design in performance.
+
+The legacy branch remains available for reference and benchmarking, but version 2 is the recommended implementation.
