@@ -298,7 +298,7 @@ def main():
     """Main entry point for the CLI with exception handling."""
     try:
         _main()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, BrokenPipeError):
         sys.exit(1)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
