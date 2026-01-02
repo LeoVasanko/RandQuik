@@ -6,22 +6,17 @@ Secondly, [flaws have been found](https://numpy.org/doc/stable/reference/random/
 
 The cryptographic alternative is simply better. Proper CSPRNGs avoid these pitfalls entirely and, on modern hardware, can now be *faster* than legacy non-cryptographic designs. There is little reason left to accept weaker guarantees for worse performance.
 
-This version uses **AEGIS**, a modern authenticated encryption primitive that leverages AES hardware acceleration. AEGIS provides extremely high throughput while retaining strong cryptographic properties, significantly outperforming our Legacy implementation and serving as an ideal foundation for a high-performance CSPRNG.
+This version uses **AEGIS**, a modern authenticated encryption primitive that leverages AES hardware acceleration. AEGIS provides extremely high throughput while retaining strong cryptographic properties, significantly outperforming our legacy implementation and serving as an ideal foundation for a high-performance CSPRNG.
 
 ## Quick start
 
-Install [UV](https://docs.astral.sh/uv/install/) and install the CLI tool with it:
+Install [UV](https://docs.astral.sh/uv/getting-started/installation/) and install the CLI tool with it:
 
 ```sh
 uv tool install randquik
 ```
 
-Now you can create random data with it:
-```sh
-randquik -t8 --len 1TB > /dev/null
-```
-
-You can try how it performs on your machine in different scenarios with:
+You can try how it performs on your machine and find the optimal parameters:
 ```sh
 randquik --benchmark
 ```
@@ -33,10 +28,8 @@ randquik -o sensitive.dat
 
 Piping and redirection:
 ```sh
-randquik | hexdump -C | head
+randquik --quiet | hexdump -C | head
 ```
-
-
 
 ## Features
 
@@ -75,51 +68,52 @@ Notes:
 - Underscores are ignored, so `1_000Mi` works the same as `1000Mi`.
 - `sect` uses the sector size of the output path when available, otherwise 512 bytes.
 
-### 2. Deterministic seeding
+### Seeding for repeatable output
 
-You can provide an explicit seed string. The same seed, length, and options will always produce the same output bytes:
+You can provide an explicit seed string, always providing the same output, which can be useful e.g. for memory/disk testing where the data needs to be read back and verified.
+
 ```sh
 randquik -l 64MiB -s my-seed-string -o chunk.bin
 ```
 
-This is useful for reproducible tests or simulations.
+If no seed is provided, a secure random one will be generated and printed on console (unless hidden by `-q`).
 
-### 4. Seekable stream and file
+### Seekable random stream and output file
 
 It is possible to seek to any byte position in the stream without delay.
 
 - `--iseek`: seek the input random stream
 - `--oseek`: seek in the output file
-- `--seek`: set both input and output seek to the same position
+- `--seek`: set both input and output to the same position
 
-Example: resume as if 5 terabytes had already been written, and continue writing to `out.dat`:
+Example: resume as if 5 terabytes had already been written, and continue writing to `out.dat`. The seed from the prior invocation should be included:
 ```sh
-randquik --seek 5T --len 1G -o out.dat
+randquik --seek 5T --len 1G -s a5Z8Ew1Hfc2VfEtY -o out.dat
 ```
 
 Bytes prior to seek position are kept as they were while the file is expanded to fit all the data starting at five terabytes mark (using sparse allocation so it doesn't actually consume 5 terabytes).
 
-Wipe all data on a disk (e.g. USB drive) but keep the partition table:
+Wipe a specific range of a disk or USB drive (using sector numbers e.g. from gdisk):
 ```sh
-randquik -oseek 2048sect -o /dev/sde
+randquik -oseek 2048sect --len 100MiB -o /dev/sde
 ```
 
-### 6. Benchmark and dry-run modes
+### Benchmark and dry-run modes
 
 Benchmark different modes and thread counts. Prints the options that perform the best on your system:
 ```sh
 randquik --benchmark
 ```
 
-To do a single run without actually writing bytes to disk or anywhere, use `--dry`:
+To do a single run without actually writing anywhere, use `--dry`:
 ```sh
 randquik --len 50GiB -t8 --dry
 ```
 
 ## Legacy
 
-The original implementation is preserved in the `legacy` git branch.
+The original implementation is preserved in the [legacy](https://github.com/LeoVasanko/RandQuik/tree/legacy) git branch.
 
-That version was once the fastest CSPRNG available, built around ChaCha20 with SIMD Assembly and C code written by me. While historically significant, it has been greatly surpassed by the current AEGIS-based design in performance.
+That version was once the fastest CSPRNG available, built around ChaCha20 with SIMD Assembly and C code written by me, making it faster than traditional algorithms without such optimizations and faster than the Linux kernel that also uses ChaCha20 to make random numbers. While historically significant, it has been greatly surpassed by the current AEGIS-based design in performance and features.
 
 The legacy branch remains available for reference and benchmarking, but version 2 is the recommended implementation.
