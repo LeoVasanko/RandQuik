@@ -271,7 +271,6 @@ def run(
     workers: int = 1,
     dry: bool = False,
     quiet: bool = False,
-    seed_for_display: str | None = None,
     action: str = "wrote",
     continue_cmd: str | None = None,
 ) -> RunResult:
@@ -296,7 +295,6 @@ def run(
             start_time,
             progress_state,
             infinite=infinite,
-            seed=seed_for_display,
         )
         if not quiet:
             progress.start()
