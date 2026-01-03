@@ -35,7 +35,8 @@ def bench_mode(
         raise ValueError(f"Unknown io_mode: {io_mode}")
 
     # Print iocmd at start of row
-    print(f"{' '.join(iocmd)[:20]:<20}", end="", flush=True)
+    sys.stdout.write(f"{' '.join(iocmd)[:20]:<20}")
+    sys.stdout.flush()
 
     for workers in tcounts:
         speeds = []
@@ -61,13 +62,13 @@ def bench_mode(
                     text=False,
                 )
             except KeyboardInterrupt:
-                print(" Interrupted\n\n", end="", flush=True)  # 6 not 8 to account for ^C
-                print(f">>> {' '.join(cmd)}", file=sys.stderr)
+                sys.stderr.write(
+                    f" Interrupted\n\n>>> {' '.join(cmd)}\n"
+                )  # 6 not 8 to account for ^C
                 sys.exit(1)
             stderr = proc.stderr.decode(errors="ignore")
             if proc.returncode != 0:
-                print(f"{'ERROR':>8}\n\n", end="", flush=True)
-                print(f">>> {' '.join(cmd)}\n{stderr}", file=sys.stderr)
+                sys.stderr.write(f"{'ERROR':>8}\n\n>>> {' '.join(cmd)}\n{stderr}")
                 sys.exit(1)
             m2 = re.findall(r"([0-9]+\.[0-9]+)\s+GB/s", stderr)
             if m2:
@@ -76,12 +77,15 @@ def bench_mode(
         if speeds:
             sorted_speeds = sorted(speeds)
             median = sorted_speeds[len(speeds) // 2]
-            print(f"{median:>8.2f}", end="", flush=True)
+            sys.stdout.write(f"{median:>8.2f}")
+            sys.stdout.flush()
             results.append((workers, median, iocmd))
         else:
-            print(f"{'---':>8}", end="", flush=True)
+            sys.stdout.write(f"{'---':>8}")
+            sys.stdout.flush()
 
-    print()  # newline after row
+    sys.stdout.write("\n")  # newline after row
+    sys.stdout.flush()
 
     # Cleanup bench file
     if bench_file:
@@ -102,32 +106,37 @@ def run_benchmark(args):
             )
         bench_file.unlink()
 
-    length = args.len or "1G"
-    max_threads = args.threads if args.threads is not None else os.cpu_count()
+    try:
+        length = "1G" if args.len is None else args.len
+        max_threads = args.threads if args.threads is not None else os.cpu_count()
 
-    all_results = {}
-    tcounts = sparse_range(max_threads)
+        all_results = {}
+        tcounts = sparse_range(max_threads)
 
-    # Print header row
-    print(f"{'randquik':<20}", end="")
-    for w in tcounts:
-        print(f"{'-t' + str(w):>8}", end="")
-    print()
-    print("-" * (20 + 8 * len(tcounts)))
+        # Print header
+        header = f"{'randquik':<20}"
+        for w in tcounts:
+            header += f"{'-t' + str(w):>8}"
+        header += "\n" + "-" * (20 + 8 * len(tcounts)) + "\n"
+        sys.stdout.write(header)
 
-    for io_mode in ["dry", "null", "file"]:
-        results = bench_mode(tcounts, io_mode, length, alg=args.alg, bench_file=bench_file)
-        all_results[io_mode] = results
+        for io_mode in ["dry", "null", "file"]:
+            results = bench_mode(tcounts, io_mode, length, alg=args.alg, bench_file=bench_file)
+            all_results[io_mode] = results
 
-    print("-" * (20 + 8 * len(tcounts)))
+        sys.stdout.write("-" * (20 + 8 * len(tcounts)) + "\n")
 
-    # Find fastest configuration and RNG speed
-    gen_speed = max(r[1] for res in all_results.values() for r in res)
-    best_speed, best_threads, best_iocmd = max(
-        [(sp, w, iocmd) for w, sp, iocmd in all_results["file"]],
-    )
-    threads = f" -t{best_threads}" if best_threads != 1 else ""
-    print(
-        f"\n>>> Fastest wrote {best_speed:.2f} GB/s, plain RNG {gen_speed:.0f} GB/s\n"
-        f"randquik {' '.join(best_iocmd)}{threads}\n"
-    )
+        # Find fastest configuration and RNG speed
+        gen_speed = max(r[1] for res in all_results.values() for r in res)
+        best_speed, best_threads, best_iocmd = max(
+            [(sp, w, iocmd) for w, sp, iocmd in all_results["file"]],
+        )
+        threads = f" -t{best_threads}" if best_threads != 1 else ""
+        sys.stderr.write(
+            f"\n>>> Fastest wrote {best_speed:.2f} GB/s, plain RNG {gen_speed:.0f} GB/s\n"
+            f"randquik {' '.join(best_iocmd)}{threads}\n"
+        )
+    finally:
+        # Cleanup bench file even if interrupted
+        with contextlib.suppress(OSError):
+            bench_file.unlink()

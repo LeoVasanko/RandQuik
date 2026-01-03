@@ -202,5 +202,5 @@ def main():
     except (KeyboardInterrupt, BrokenPipeError):
         sys.exit(1)
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
