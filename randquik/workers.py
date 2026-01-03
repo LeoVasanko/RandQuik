@@ -98,7 +98,6 @@ class _FdProducer:
         timer = stopwatch()
 
         try:
-            slot = -1  # No slot to commit on first iteration
             while True:
                 # Claim next block number
                 with self.lock_blkno:
@@ -108,11 +107,6 @@ class _FdProducer:
 
                 with self._lock:
                     stats.lock_acquire_time += next(timer)
-                    # Commit previous block (mark ready + notify consumer)
-                    if slot >= 0:
-                        self.ready[slot] = True
-                        self.has_data.notify()
-                    stats.lock_notify_time += next(timer)
                     # Wait for the NEXT slot to be free
                     slot = blkno % self.num_slots
                     while self.ready[slot] and not self.quit:
@@ -131,6 +125,11 @@ class _FdProducer:
                 stats.crypto_time += next(timer)
                 stats.blocks_processed += 1
                 stats.bytes_generated += self.block_size
+
+                # Commit block (mark ready + notify consumer)
+                with self._lock:
+                    self.ready[slot] = True
+                    self.has_data.notify()
 
         finally:
             view.release()
