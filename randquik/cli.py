@@ -165,7 +165,6 @@ def _main():
         workers=workers,
         dry=args.dry,
         quiet=args.quiet,
-        seed_for_display=seed_for_display,
         action=action,
     )
 

@@ -30,13 +30,11 @@ class ProgressDisplay:
         start_time: float,
         state: dict,
         infinite: bool | None = None,
-        seed: str | None = None,
     ):
         self.total_bytes = total_bytes
         self.start_time = start_time
         self.state = state  # Must have 'written' key
         self.infinite = infinite if infinite is not None else total_bytes is None
-        self.seed = seed
         self.active = sys.stderr.isatty()
         self._stop = threading.Event()
         self._thread = None
@@ -179,12 +177,11 @@ class ProgressDisplay:
         spinner = "◐◓◑◒"[int(elapsed * 4) % 4]
         written_gb = written / 1_000_000_000
         current_speed = instant_speed / 1_000_000_000
-        seed_hint = f"  \x1b[2m-s {self.seed}\x1b[0m" if self.seed else ""
         header = (
             f"  \x1b[1;36mRandQuik {spinner}\x1b[0m  "
-            f"\x1b[2m│\x1b[0m  {written_gb:6.2f}/∞ GB  "
+            f"\x1b[2m│\x1b[0m  {written_gb:6.2f} GB \x1b[2m∞\x1b[0m  "
             f"\x1b[2m@\x1b[0m {current_speed:5.2f} GB/s  "
-            f"\x1b[2m│\x1b[0m  {format_time(elapsed):>8}{seed_hint}"
+            f"\x1b[2m│\x1b[0m  {format_time(elapsed):>8}"
         )
         lines.append(header)
         lines.append("")
@@ -230,10 +227,9 @@ class ProgressDisplay:
         # Add GB/s label above the graph
         lines.append(" \x1b[36mGB/s\x1b[0m")
 
-        # Compute nice Y-axis tick values
-        nice_ticks = set(self._nice_y_ticks(scale_max))
-        labeled_values = set()  # Track which tick values have been labeled
-        tolerance = scale_max / (graph_rows - 1) / 2 if graph_rows > 1 else 0.1
+        # Compute nice Y-axis tick values and map each to its best row
+        nice_ticks = self._nice_y_ticks(scale_max, graph_rows)
+        row_labels = self._assign_ticks_to_rows(nice_ticks, scale_max, graph_rows)
 
         for row in range(graph_rows):
             graph_line = self._render_graph_row(
@@ -246,16 +242,8 @@ class ProgressDisplay:
             )
             graph_line = graph_line.ljust(graph_width)
 
-            # Y-axis labels - only label nice tick values
-            row_value = (
-                scale_max * (graph_rows - 1 - row) / (graph_rows - 1) if graph_rows > 1 else 0
-            )
-            label = "    "
-            for tick in nice_ticks:
-                if abs(row_value - tick) < tolerance and tick not in labeled_values:
-                    label = f"{self._format_label(tick):>4}"
-                    labeled_values.add(tick)
-                    break
+            # Y-axis label from pre-computed mapping
+            label = row_labels.get(row, "    ")
             lines.append(f" \x1b[36m{label}\x1b[0m \x1b[33m{graph_line}\x1b[0m")
 
         # Time axis
@@ -289,13 +277,18 @@ class ProgressDisplay:
         else:
             return f"{val:.1f}"
 
-    def _nice_y_ticks(self, scale_max: float, max_ticks: int = 5) -> list[float]:
+    def _nice_y_ticks(self, scale_max: float, graph_rows: int = 10) -> list[float]:
         """Return nice Y-axis tick values from 0 to scale_max.
 
-        Chooses a nice interval (1, 2, 5 × 10^N) that gives roughly max_ticks labels.
+        Chooses a nice interval (1, 2, 5 × 10^N) that gives labels with
+        sufficient spacing (at least 3 rows between labels).
         """
         if scale_max <= 0:
             return [0]
+
+        # We want at least 5 empty rows between labels for readability
+        min_row_spacing = 5
+        max_ticks = max(2, graph_rows // min_row_spacing)
 
         # Nice intervals: 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, ...
         nice_bases = [1, 2, 5]
@@ -318,6 +311,31 @@ class ProgressDisplay:
             ticks.append(val)
             val += best_interval
         return ticks
+
+    def _assign_ticks_to_rows(
+        self, ticks: list[float], scale_max: float, graph_rows: int
+    ) -> dict[int, str]:
+        """Assign each tick to the row closest to its value.
+
+        Returns a dict mapping row index to formatted label string.
+        Each tick is assigned to exactly one row.
+        """
+        row_labels: dict[int, str] = {}
+        if graph_rows <= 1 or scale_max <= 0:
+            return {0: f"{self._format_label(ticks[0] if ticks else 0):>4}"}
+
+        for tick in ticks:
+            # Calculate which row this tick value corresponds to
+            # Row 0 is top (scale_max), row graph_rows-1 is bottom (0)
+            exact_row = (1 - tick / scale_max) * (graph_rows - 1)
+            best_row = round(exact_row)
+            best_row = max(0, min(graph_rows - 1, best_row))
+
+            # Only assign if row is not already taken (first tick wins)
+            if best_row not in row_labels:
+                row_labels[best_row] = f"{self._format_label(tick):>4}"
+
+        return row_labels
 
     def _build_infinite_time_axis(self, graph_width: int, scale_time: float) -> list[str]:
         """Build time axis for infinite mode with nice interval labels.
@@ -457,12 +475,11 @@ class ProgressDisplay:
         current_speed = instant_speed / 1_000_000_000
         written_gb = written / 1_000_000_000
         total_gb = self.total_bytes / 1_000_000_000
-        seed_hint = f"  \x1b[2m-s {self.seed}\x1b[0m" if self.seed else ""
         header = (
             f"  \x1b[1;36mRandQuik {spinner}\x1b[0m  "
             f"\x1b[2m│\x1b[0m  {written_gb:6.2f}\x1b[2m/\x1b[0m{total_gb:.2f} GB  "
             f"\x1b[2m@\x1b[0m {current_speed:5.2f} GB/s  "
-            f"ETA {format_time(eta):>8}{seed_hint}"
+            f"ETA {format_time(eta):>8}"
         )
         lines.append(header)
         lines.append("")
@@ -478,10 +495,9 @@ class ProgressDisplay:
         # Add GB/s label above the graph
         lines.append(" \x1b[36mGB/s\x1b[0m")
 
-        # Compute nice Y-axis tick values
-        nice_ticks = set(self._nice_y_ticks(scale_max))
-        labeled_values = set()  # Track which tick values have been labeled
-        tolerance = scale_max / (graph_rows - 1) / 2 if graph_rows > 1 else 0.1
+        # Compute nice Y-axis tick values and map each to its best row
+        nice_ticks = self._nice_y_ticks(scale_max, graph_rows)
+        row_labels = self._assign_ticks_to_rows(nice_ticks, scale_max, graph_rows)
 
         for row in range(graph_rows):
             graph_line = self._render_graph_row(
@@ -492,16 +508,8 @@ class ProgressDisplay:
                 graph_width,
                 avg_speed_gbs,
             )
-            # Y-axis labels - only label nice tick values
-            row_value = (
-                scale_max * (graph_rows - 1 - row) / (graph_rows - 1) if graph_rows > 1 else 0
-            )
-            label = "    "
-            for tick in nice_ticks:
-                if abs(row_value - tick) < tolerance and tick not in labeled_values:
-                    label = f"{self._format_label(tick):>4}"
-                    labeled_values.add(tick)
-                    break
+            # Y-axis label from pre-computed mapping
+            label = row_labels.get(row, "    ")
             lines.append(f" \x1b[36m{label}\x1b[0m \x1b[33m{graph_line}\x1b[0m")
 
         # Time labels on X-axis with nice intervals
