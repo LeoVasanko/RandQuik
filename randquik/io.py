@@ -19,7 +19,7 @@ def _open_output(
     oseek: int = 0,
 ) -> tuple[int, bool]:
     """Open output file descriptor, preallocate and apply platform hints.
-    
+
     Returns:
         Tuple of (file descriptor, whether we created the file)
     """

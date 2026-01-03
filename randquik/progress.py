@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 
-from randquik.utils import format_time
+from randquik.stats import format_time
 
 __all__ = ["ProgressDisplay"]
 

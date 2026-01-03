@@ -1,94 +1,37 @@
 """Worker threads and ring buffer management for parallel generation."""
 
-import logging
 import os
+import sys
 import threading
-from dataclasses import dataclass
+import time
 
-from randquik.utils import stopwatch
+from randquik.io import open_fd
+from randquik.progress import ProgressDisplay
+from randquik.stats import (
+    ConsumerStats,
+    RunResult,
+    SingleThreadedStats,
+    WorkerStats,
+    stopwatch,
+)
 
 __all__ = [
     "BLOCK_SIZE",
-    "FdProducer",
-    "WorkerStats",
+    "RunResult",
+    "run",
 ]
-
-
-@dataclass
-class WorkerStats:
-    """Timing statistics for a worker thread."""
-
-    worker_id: int = -1
-    # Lock timing breakdown
-    lock_acquire_time: float = 0.0  # Time to acquire the lock (contention)
-    lock_wait_space_time: float = 0.0  # Time waiting for has_space condition
-    lock_claim_time: float = 0.0  # Time inside lock claiming block number
-    lock_notify_time: float = 0.0  # Time inside lock marking ready + notify
-    # Work timing
-    crypto_time: float = 0.0
-    madvise_time: float = 0.0
-    # Counters
-    blocks_processed: int = 0
-    bytes_generated: int = 0
-    wait_cycles: int = 0  # How many times we had to wait for space
-
-    def total_time(self) -> float:
-        """Total measured time."""
-        return (
-            self.lock_acquire_time
-            + self.lock_wait_space_time
-            + self.lock_claim_time
-            + self.lock_notify_time
-            + self.crypto_time
-            + self.madvise_time
-        )
-
-    def format_report(self, label: str | None = None) -> str:
-        """Format a human-readable report."""
-        total = self.total_time()
-        if total == 0:
-            return f"Worker {self.worker_id}: no data"
-
-        if label is None:
-            label = f"Worker {self.worker_id}"
-
-        def pct(val: float) -> str:
-            return f"{100 * val / total:.1f}%" if total > 0 else "--"
-
-        def ms(val: float) -> str:
-            return f"{val * 1000:.1f}ms"
-
-        lock_total = (
-            self.lock_acquire_time
-            + self.lock_wait_space_time
-            + self.lock_claim_time
-            + self.lock_notify_time
-        )
-
-        lines = [
-            f"{label} ({self.blocks_processed} blocks, {self.bytes_generated / 1e6:.1f} MB):",
-            f"  crypto:       {ms(self.crypto_time):>10} ({pct(self.crypto_time)})",
-            f"  lock total:   {ms(lock_total):>10} ({pct(lock_total)})",
-            f"    acquire:    {ms(self.lock_acquire_time):>10} ({pct(self.lock_acquire_time)})",
-            f"    wait space: {ms(self.lock_wait_space_time):>10} ({pct(self.lock_wait_space_time)}) [{self.wait_cycles} cycles]",
-            f"    claim:      {ms(self.lock_claim_time):>10} ({pct(self.lock_claim_time)})",
-            f"    notify:     {ms(self.lock_notify_time):>10} ({pct(self.lock_notify_time)})",
-        ]
-        if self.madvise_time > 0:
-            lines.append(f"  madvise:      {ms(self.madvise_time):>10} ({pct(self.madvise_time)})")
-        lines.append(f"  total:        {ms(total):>10}")
-        return "\n".join(lines)
 
 
 BLOCK_SIZE = 1 << 20
 
 
-class FdProducer:
+class _FdProducer:
     """Multi-threaded producer with ring buffer for sequential file output.
 
     Uses efficient synchronization:
     - Single lock with two conditions (has_data, has_space)
-    - Workers wait on has_space, consumer waits on has_data
+    - Workers wait on has_space, notify has_data when block is ready
+    - Consumer waits on has_data, notifies has_space when block is consumed
     - Crypto runs outside the lock
     """
 
@@ -102,7 +45,6 @@ class FdProducer:
         dry: bool = False,
         iseek: int = 0,
         block_size: int = BLOCK_SIZE,
-        profile: bool = False,
     ):
         self.workers = workers
         self.key = key
@@ -112,189 +54,149 @@ class FdProducer:
         self.dry = dry
         self.iseek = iseek
         self.block_size = block_size
-        self.profile = profile
 
         # iseek handling: which block to start at, and offset within first block
         self.start_block = iseek // block_size
         self.start_offset = iseek % block_size
 
-        # Ring buffer state - more slots reduce wait time
-        # With N workers, we want enough buffers so workers rarely wait
-        self.num_slots = workers * 4
+        self.num_slots = workers + 2  # Tested optimal (+1 for I/O and +1 to avoid congestion)
         self._buf = bytearray(self.num_slots * block_size)
 
-        # Single lock with conditions (simpler, faster than semaphore + events)
+        # Separate conditions for producers and consumer
         self._lock = threading.Lock()
-        self._has_data = threading.Condition(self._lock)
-        self._has_space = threading.Condition(self._lock)
+        self.has_data = threading.Condition(self._lock)  # Consumer waits, workers notify
+        self.has_space = threading.Condition(self._lock)  # Workers wait, consumer notifies
+        self.lock_blkno = threading.Lock()
+        self.blkno = self.start_block  # next block to generate
+        self.ready = [False] * self.num_slots  # which block number is there ready
+        self.quit = False
 
-        self._genpos = 0  # next block to generate
-        self._conpos = 0  # next block to consume
-        self._ready = [False] * self.num_slots  # which slots have data
-        self._quit = False
-
-        self._threads: list[threading.Thread] = []
+        self.threads: list[threading.Thread] = []
         self.written = 0
-        self.wait_time = 0.0
-        self.write_time = 0.0
+        self.consumer_stats = ConsumerStats()
 
         # Per-worker stats, collected after threads finish
         self._worker_stats: list[WorkerStats] = []
         self._stats_lock = threading.Lock()
 
     def start(self):
-        """Start worker threads."""
-        for i in range(self.workers):
-            t = threading.Thread(target=self._worker, args=(i,), daemon=True)
-            self._threads.append(t)
+        self.threads = [
+            threading.Thread(target=self.worker, args=(i,)) for i in range(self.workers)
+        ]
+        for t in self.threads:
             t.start()
 
-    def _worker_fast(self, view):
-        """Fast worker loop without profiling."""
-        while True:
-            with self._lock:
-                # Wait for a slot
-                while self._genpos - self._conpos >= self.num_slots:
-                    if self._quit:
-                        return
-                    self._has_space.wait()
-                if self._quit:
-                    return
-                block_num = self._genpos
-                self._genpos += 1
-
-            # Generate outside lock
-            slot = block_num % self.num_slots
-            buf = view[slot * self.block_size : (slot + 1) * self.block_size]
-            actual_block = self.start_block + block_num
-            self.ciph.stream(
-                self.key, actual_block.to_bytes(self.ciph.NONCEBYTES, "little"), into=buf
-            )
-
-            # Mark ready
-            with self._lock:
-                self._ready[slot] = True
-                self._has_data.notify()
-
-    def _worker_profile(self, worker_id: int, view, stats: WorkerStats, timer):
-        """Worker loop with detailed profiling."""
-        stats.worker_id = worker_id
-        while True:
-            # Measure lock acquisition (contention)
-            next(timer)
-            self._lock.acquire()
-            stats.lock_acquire_time += next(timer)
-
-            try:
-                # Measure time waiting for space
-                while self._genpos - self._conpos >= self.num_slots:
-                    if self._quit:
-                        self._lock.release()
-                        return
-                    next(timer)
-                    self._has_space.wait()
-                    stats.lock_wait_space_time += next(timer)
-                    stats.wait_cycles += 1
-
-                if self._quit:
-                    self._lock.release()
-                    return
-
-                # Measure claiming block number
-                next(timer)
-                block_num = self._genpos
-                self._genpos += 1
-                stats.lock_claim_time += next(timer)
-            finally:
-                self._lock.release()
-
-            slot = block_num % self.num_slots
-            buf = view[slot * self.block_size : (slot + 1) * self.block_size]
-            actual_block = self.start_block + block_num
-
-            # Measure crypto
-            next(timer)
-            self.ciph.stream(
-                self.key, actual_block.to_bytes(self.ciph.NONCEBYTES, "little"), into=buf
-            )
-            stats.crypto_time += next(timer)
-            stats.blocks_processed += 1
-            stats.bytes_generated += self.block_size
-
-            # Measure notify (lock acquire + mark ready + notify)
-            next(timer)
-            with self._lock:
-                self._ready[slot] = True
-                self._has_data.notify()
-            stats.lock_notify_time += next(timer)
-
-    def _worker(self, worker_id: int):
+    def worker(self, worker_id: int):
+        assert self.num_slots >= self.workers, "Ring buffer quarantee broken"
         view = memoryview(self._buf)
-        stats = WorkerStats(worker_id=worker_id) if self.profile else None
+        slots = [
+            view[i * self.block_size : (i + 1) * self.block_size] for i in range(self.num_slots)
+        ]
+
+        # Profiling setup
+        stats = WorkerStats(worker_id=worker_id)
+        timer = stopwatch()
+
         try:
-            if self.profile:
-                timer = stopwatch()
-                self._worker_profile(worker_id, view, stats, timer)
-            else:
-                self._worker_fast(view)
-        except BaseException as e:
-            logging.exception("Worker thread exception: %s", e)
+            slot = -1  # No slot to commit on first iteration
+            while True:
+                # Claim next block number
+                with self.lock_blkno:
+                    blkno = self.blkno
+                    self.blkno += 1
+                stats.lock_claim_time += next(timer)
+
+                with self._lock:
+                    stats.lock_acquire_time += next(timer)
+                    # Commit previous block (mark ready + notify consumer)
+                    if slot >= 0:
+                        self.ready[slot] = True
+                        self.has_data.notify()
+                    stats.lock_notify_time += next(timer)
+                    # Wait for the NEXT slot to be free
+                    slot = blkno % self.num_slots
+                    while self.ready[slot] and not self.quit:
+                        stats.wait_cycles += 1
+                        self.has_space.wait()
+                    stats.lock_wait_space_time += next(timer)
+                    if self.quit:
+                        return
+
+                # Generate block
+                self.ciph.stream(
+                    self.key,
+                    blkno.to_bytes(self.ciph.NONCEBYTES, "little"),
+                    into=slots[slot],
+                )
+                stats.crypto_time += next(timer)
+                stats.blocks_processed += 1
+                stats.bytes_generated += self.block_size
+
         finally:
             view.release()
-            if stats:
-                with self._stats_lock:
-                    self._worker_stats.append(stats)
-            with self._lock:
-                self._quit = True
-                self._has_data.notify_all()
+            with self._stats_lock:
+                self._worker_stats.append(stats)
 
-    def run(self, progress_state: dict | None = None):
+    def consumer(self, progress_state: dict | None = None):
         """Consume blocks and write to fd. Call start() first."""
         view = memoryview(self._buf)
-        timer = stopwatch()
-        is_first_block = True
         try:
-            while self.total_bytes is None or self.written < self.total_bytes:
-                with self._lock:
-                    slot = self._conpos % self.num_slots
-                    while not self._ready[slot]:
-                        if self._quit:
-                            return
-                        self._has_data.wait()
-                    self._ready[slot] = False
-                    self._conpos += 1
-                    self._has_space.notify()
+            slots = [
+                view[i * self.block_size : (i + 1) * self.block_size] for i in range(self.num_slots)
+            ]
+            blkno = self.start_block
+            slot = blkno % self.num_slots
+            total = sys.maxsize if self.total_bytes is None else self.total_bytes
+            # Handle the first block: skip start_offset bytes (note: this is purposefully left out of stats)
+            with self.has_data:
+                while not self.ready[slot] and not self.quit:
+                    self.has_data.wait()
+                if self.quit:
+                    return
 
-                self.wait_time += next(timer)
-                buf = view[slot * self.block_size : (slot + 1) * self.block_size]
-                # Handle first block: skip start_offset bytes
-                if is_first_block and self.start_offset > 0:
-                    buf_start = self.start_offset
-                    is_first_block = False
-                else:
-                    buf_start = 0
-
-                to_write = min(
-                    self.block_size - buf_start,
-                    self.total_bytes - self.written
-                    if self.total_bytes is not None
-                    else self.block_size - buf_start,
-                )
+                buf = slots[slot][self.start_offset : self.start_offset + total]
                 if not self.dry:
-                    os.write(self.fd, buf[buf_start : buf_start + to_write])
-                self.write_time += next(timer)
-                self.written += to_write
+                    os.write(self.fd, buf)
+                self.written += len(buf)
+            # Other blocks
+            timer = stopwatch()
+            while self.written < total:
+                # Take/wait for expected slot
+                with self._lock:
+                    # Release previous slot and notify workers
+                    self.ready[slot] = False
+                    self.has_space.notify_all()
+                    # Wait for the next buffer to be ready
+                    blkno += 1
+                    slot = blkno % self.num_slots
+                    while not self.ready[slot] and not self.quit:
+                        self.has_data.wait()
+                    if self.quit:
+                        return
+                self.consumer_stats.wait_time += next(timer)
+                buf = slots[slot]
+                # Last block? Trim to remaining size
+                if self.written + len(buf) > total:
+                    buf = buf[: total - self.written]
+                if not self.dry:
+                    os.write(self.fd, buf)
+
+                self.consumer_stats.write_time += next(timer)
+                self.written += len(buf)
                 if progress_state is not None:
                     progress_state["written"] = self.written
+
         finally:
+            self.stop()
             view.release()
 
     def stop(self):
         """Signal workers to stop and wait for them."""
         with self._lock:
-            self._quit = True
-            self._has_space.notify_all()
-        for t in self._threads:
+            self.quit = True
+            self.has_data.notify_all()
+            self.has_space.notify_all()
+        for t in self.threads:
             t.join()
 
     def get_worker_stats(self) -> list[WorkerStats]:
@@ -303,21 +205,129 @@ class FdProducer:
             # Sort by worker_id for consistent output
             return sorted(self._worker_stats, key=lambda s: s.worker_id)
 
-    def format_stats_report(self) -> str:
-        """Format a complete stats report for all workers."""
-        lines = []
-        stats_list = self.get_worker_stats()
+    def run(self, progress_state: dict | None = None):
+        """Run multi-threaded generation."""
+        self.start()
+        try:
+            self.consumer(progress_state)
+        finally:
+            self.stop()
 
-        if not stats_list:
-            return "No worker stats available"
 
-        # Per-worker stats
-        for stats in stats_list:
-            lines.append(stats.format_report())
+class _SingleThreadedProducer:
+    """Single-threaded producer for infinite output or workers=0 mode."""
 
-        # Consumer stats
-        lines.append("Consumer:")
-        lines.append(f"  wait time:  {self.wait_time * 1000:.1f}ms")
-        lines.append(f"  write time: {self.write_time * 1000:.1f}ms")
+    def __init__(
+        self,
+        key: bytes,
+        ciph,
+        total_bytes: int | None,
+        fd: int,
+        dry: bool = False,
+        block_size: int = BLOCK_SIZE,
+    ):
+        self.key = key
+        self.ciph = ciph
+        self.total_bytes = total_bytes
+        self.fd = fd
+        self.dry = dry
+        self.block_size = block_size
 
-        return "\n".join(lines)
+        self.written = 0
+        self.stats = SingleThreadedStats()
+
+    def run(self, progress_state: dict | None = None):
+        """Generate and write blocks sequentially."""
+        buf = bytearray(self.block_size)
+        view = memoryview(buf)
+        nonce = bytearray(self.ciph.NONCEBYTES)
+        total = sys.maxsize if self.total_bytes is None else self.total_bytes
+        timer = stopwatch()
+
+        try:
+            while self.written < total:
+                size = min(self.block_size, total - self.written)
+                chunk = view[:size]
+                self.ciph.stream(self.key, nonce, size, into=chunk)
+                self.stats.crypto_time += next(timer)
+                if not self.dry:
+                    os.write(self.fd, chunk)
+                self.stats.write_time += next(timer)
+                self.ciph.nonce_increment(nonce)
+                self.written += size
+                if progress_state is not None:
+                    progress_state["written"] = self.written
+        finally:
+            view.release()
+
+
+def run(
+    output: str | None,
+    total_bytes: int | None,
+    iseek: int,
+    oseek: int,
+    key: bytes,
+    ciph,
+    workers: int = 1,
+    dry: bool = False,
+    quiet: bool = False,
+    seed_for_display: str | None = None,
+    action: str = "wrote",
+    continue_cmd: str | None = None,
+) -> RunResult:
+    """Run random generation with specified number of workers. Returns RunResult.
+
+    Args:
+        workers: Number of worker threads. 0 for single-threaded mode.
+    """
+    start_time = time.perf_counter()
+    infinite = total_bytes is None
+    fd_size = 0 if infinite else total_bytes
+
+    with open_fd(output, fd_size, dry=dry, oseek=oseek) as fd:
+        if workers == 0:
+            producer = _SingleThreadedProducer(key, ciph, total_bytes, fd, dry=dry)
+        else:
+            producer = _FdProducer(workers, key, ciph, total_bytes, fd, dry=dry, iseek=iseek)
+
+        progress_state = {"written": 0}
+        progress = ProgressDisplay(
+            total_bytes,
+            start_time,
+            progress_state,
+            infinite=infinite,
+            seed=seed_for_display,
+        )
+        if not quiet:
+            progress.start()
+
+        interrupted = False
+        try:
+            producer.run(progress_state)
+        except (KeyboardInterrupt, BrokenPipeError):
+            interrupted = True
+        finally:
+            progress.stop()
+
+        elapsed = time.perf_counter() - start_time
+
+        # Build result with raw stats
+        if workers == 0:
+            return RunResult(
+                written=producer.written,
+                elapsed=elapsed,
+                interrupted=interrupted,
+                action=action,
+                singlethreaded_stats=producer.stats,
+                continue_cmd=continue_cmd,
+            )
+        else:
+            return RunResult(
+                written=producer.written,
+                elapsed=elapsed,
+                interrupted=interrupted,
+                action=action,
+                consumer_stats=producer.consumer_stats,
+                worker_stats=producer.get_worker_stats(),
+                continue_cmd=continue_cmd,
+            )

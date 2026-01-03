@@ -6,7 +6,8 @@ with support for multi-threaded generation and various I/O modes.
 
 from randquik.crypto import derive_key, generate_random_seed
 from randquik.progress import ProgressDisplay
-from randquik.utils import format_size, format_time, parse_size
+from randquik.stats import format_size, format_time
+from randquik.utils import parse_size
 
 try:
     from randquik._version import __version__
