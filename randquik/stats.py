@@ -30,9 +30,9 @@ def format_size(size: float) -> str:
     """Format bytes as human-readable size."""
     for unit in ["B", "kB", "MB", "GB", "TB"]:
         if abs(size) < 1000:
-            return f"{size:.0f}{unit}"
+            return f"{size:.0f} {unit}"
         size /= 1000
-    return f"{size:.0f}PB"
+    return f"{size:.0f} PB"
 
 
 def format_time(seconds: float) -> str:
@@ -40,18 +40,18 @@ def format_time(seconds: float) -> str:
     if seconds < 0:
         return "--"
     if seconds < 1:
-        return f"{seconds * 1000:.0f}ms"
+        return f"{seconds * 1000:.0f} ms"
     if seconds < 90:
-        return f"{seconds:.0f}s"
+        return f"{seconds:.0f} s"
     elif seconds < 5400:  # 90 minutes
         m = int(seconds / 60)
-        return f"{m}m"
+        return f"{m} m"
     elif seconds < 172800:  # 48 hours
         h = int(seconds / 3600)
-        return f"{h}h"
+        return f"{h} h"
     else:
         d = int(seconds / 86400)
-        return f"{d}d"
+        return f"{d} d"
 
 
 @dataclass
@@ -157,7 +157,7 @@ class RunResult:
 
         msg = (
             f"\n\033[36m[RandQuik]\033[32m {self.action} \033[1m{size_str}\033[0;32m in "
-            f"\033[1m{time_str}\033[0;32m @ \033[1;32m{speed_gbs:.2f}GB/s{stats_fmt}\033[0m"
+            f"\033[1m{time_str}\033[0;32m @ \033[1;32m{speed_gbs:.2f} GB/s{stats_fmt}\033[0m"
             f"{status_fmt}\033[1m{cmd_line}\n"
         )
 
@@ -181,7 +181,7 @@ def format_worker_stats_report(
         return "No worker stats available"
 
     def ms(val: float) -> str:
-        return f"{val * 1000:.0f}"
+        return f"{val * 1000:.0f} ms"
 
     # Column width for worker data
     col_w = 8
@@ -216,33 +216,33 @@ def format_worker_stats_report(
     # Timing rows with summed values for percentage
     timing_rows = [
         (
-            "crypto ms",
+            "crypto",
             sum(s.crypto_time for s in worker_stats),
             [ms(s.crypto_time) for s in worker_stats],
         ),
         (
-            "lock_acq ms",
+            "lock_acq",
             sum(s.lock_acquire_time for s in worker_stats),
             [ms(s.lock_acquire_time) for s in worker_stats],
         ),
         (
-            "wait_sp ms",
+            "wait_sp",
             sum(s.lock_wait_space_time for s in worker_stats),
             [ms(s.lock_wait_space_time) for s in worker_stats],
         ),
         (
-            "claim ms",
+            "claim",
             sum(s.lock_claim_time for s in worker_stats),
             [ms(s.lock_claim_time) for s in worker_stats],
         ),
         (
-            "notify ms",
+            "notify",
             sum(s.lock_notify_time for s in worker_stats),
             [ms(s.lock_notify_time) for s in worker_stats],
         ),
     ]
 
-    timing_rows.append(("total ms", total_all, [ms(s.total_time()) for s in worker_stats]))
+    timing_rows.append(("total", total_all, [ms(s.total_time()) for s in worker_stats]))
 
     lines = [header, sep]
     for label, pct_val, values in counter_rows:
