@@ -24,15 +24,10 @@ def _open_output(
         Tuple of (file descriptor, whether we created the file)
     """
     created = False
-    if output_path:
-        path = pathlib.Path(output_path)
-        created = not path.exists()
-        flags = os.O_WRONLY | os.O_CREAT
-        fd = os.open(str(path), flags, 0o644)
-    else:
-        if sys.stdout.isatty():
-            raise ValueError("Refusing to write binary data to terminal. Use -o to specify a file.")
-        fd = sys.stdout.fileno()
+    path = pathlib.Path(output_path)
+    created = not path.exists()
+    flags = os.O_WRONLY | os.O_CREAT
+    fd = os.open(str(path), flags, 0o644)
 
     required_size = oseek + (total_bytes if total_bytes is not None else 0)
     current_size = os.fstat(fd).st_size
@@ -83,6 +78,8 @@ def open_fd(
         yield -1
         return
     if not output_path:
+        if sys.stdout.isatty():
+            raise ValueError("Refusing to write binary data to terminal. Use -o to specify a file.")
         yield sys.stdout.fileno()
         return
     fd, created = _open_output(output_path, total_bytes, oseek)
