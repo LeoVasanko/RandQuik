@@ -102,7 +102,7 @@ def run_benchmark(args):
             )
         bench_file.unlink()
 
-    length = args.len or "128MiB"
+    length = args.len or "1G"
     max_threads = args.threads if args.threads is not None else os.cpu_count()
 
     all_results = {}
