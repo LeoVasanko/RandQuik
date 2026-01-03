@@ -2,31 +2,19 @@
 
 import argparse
 import gc
-import os
 import sys
-import time
 
 import aeg
 
 from randquik.benchmark import run_benchmark
 from randquik.crypto import derive_key, generate_random_seed
-from randquik.io import open_fd
-from randquik.progress import ProgressDisplay
-from randquik.utils import (
-    parse_size,
-    print_summary,
-)
-from randquik.workers import (
-    BLOCK_SIZE,
-    FdProducer,
-)
+from randquik.utils import parse_size
+from randquik.workers import run
 
 __all__ = ["main"]
 
 # Disable GC for performance
 gc.disable()
-
-ciph: aeg.Cipher = None  # type: ignore (set in main after parsing args)
 
 DEFAULT_ALG = "AEGIS-128X2"
 
@@ -54,56 +42,6 @@ def parse_seeks(args):
     except ValueError as e:
         raise ValueError(f"Error parsing seek: {e}") from None
     return iseek, oseek
-
-
-def singlethreaded(args, total_bytes, oseek, start_time, key, seed_for_display):
-    if args.verbose:
-        mode_desc = "infinite output" if total_bytes is None else "workers=0"
-        print(
-            f"Special mode: {mode_desc} — single-buffer, single-threaded generation",
-            file=sys.stderr,
-        )
-
-    with open_fd(
-        args.output, 0 if total_bytes is None else total_bytes, dry=args.dry, oseek=oseek
-    ) as fd:
-        written = 0
-        buf = bytearray(BLOCK_SIZE)
-        view = memoryview(buf)
-        nonce = bytearray(ciph.NONCEBYTES)
-
-        progress_state = {"written": 0}
-        progress = ProgressDisplay(
-            total_bytes,
-            start_time,
-            progress_state,
-            infinite=total_bytes is None,
-            seed=seed_for_display,
-        )
-        if not args.quiet:
-            progress.start()
-
-        try:
-            while total_bytes is None or written < total_bytes:
-                start = written
-                if total_bytes is None:
-                    size = BLOCK_SIZE
-                else:
-                    end = min(start + BLOCK_SIZE, total_bytes)
-                    size = end - start
-                chunk = view[:size]
-                ciph.stream(key, nonce, size, into=chunk)
-                if not args.dry:
-                    os.write(fd, chunk)
-                ciph.nonce_increment(nonce)
-                written += size
-                progress_state["written"] = written
-        finally:
-            progress.stop()
-            elapsed = time.perf_counter() - start_time
-            action = "generated" if args.dry else "wrote"
-            if not args.quiet and total_bytes is not None:
-                print_summary(written, elapsed, action, seed=seed_for_display)
 
 
 def _main():
@@ -169,8 +107,9 @@ def _main():
     parser.add_argument(
         "-v",
         "--verbose",
-        action="store_true",
-        help="Verbose mode: show I/O mode and timing statistics",
+        action="count",
+        default=0,
+        help="Verbose mode: -v for I/O mode, -vv for worker statistics",
     )
 
     args = parser.parse_args()
@@ -179,7 +118,6 @@ def _main():
     if args.output == "-":
         args.output = None
 
-    global ciph
     ciph = aeg.cipher(args.alg or DEFAULT_ALG)
 
     # Validate and process args
@@ -187,10 +125,8 @@ def _main():
     key = prepare_key(seed, ciph.KEYBYTES)
     iseek, oseek = parse_seeks(args)
     total_bytes = parse_size(args.len)  # None if not specified, 0 if -l0
-    # Seed hint for generated seeds
-    seed_for_display = seed if generated_seed else None
-
-    start_time = time.perf_counter()
+    # Always track the seed for commands, but only show repeat for generated seeds
+    seed_for_display = seed
 
     if args.benchmark:
         if args.seed is not None:
@@ -200,41 +136,64 @@ def _main():
         run_benchmark(args)
         return
 
-    # Single-threaded mode (workers == 0)
-    if args.threads == 0:
-        return singlethreaded(args, total_bytes, oseek, start_time, key, seed_for_display)
+    # Build continue command for interruption
+    action = "generated" if args.dry else "wrote"
+    continue_cmd = None
+    repeat_cmd = None
+    if args.output and seed_for_display:
+        # Will be updated with actual written bytes after run
+        continue_cmd = f"randquik -s {seed_for_display} --seek {{seek}} -o {args.output}"
+        if args.len:
+            continue_cmd += f" -l {args.len}"
+    # Build repeat command for randomly generated seeds (so user can reproduce)
+    if generated_seed and not args.quiet:
+        repeat_cmd = f"randquik -s {seed_for_display}"
+        if args.len:
+            repeat_cmd += f" -l {args.len}"
+        if args.output:
+            repeat_cmd += f" -o {args.output}"
 
+    # Run generation
     workers = args.threads if args.threads is not None else 1
+    result = run(
+        output=args.output,
+        total_bytes=total_bytes,
+        iseek=iseek,
+        oseek=oseek,
+        key=key,
+        ciph=ciph,
+        workers=workers,
+        dry=args.dry,
+        quiet=args.quiet,
+        seed_for_display=seed_for_display,
+        action=action,
+    )
 
-    # File mode with ring buffers
-    with open_fd(args.output, total_bytes, dry=args.dry, oseek=oseek) as fd:
-        producer = FdProducer(
-            workers, key, ciph, total_bytes, fd, dry=args.dry, iseek=iseek, profile=args.verbose
-        )
+    # Set repeat command for generated seeds
+    result.repeat_cmd = repeat_cmd
 
-        if args.verbose:
-            dry_str = " (dry run)" if args.dry else ""
-            print(
-                f"I/O mode: {workers} workers, {producer.num_slots} buffers, sequential writes{dry_str}",
-                file=sys.stderr,
+    # Update continue command with actual written bytes
+    if result.interrupted and result.written > 0 and args.output:
+        new_iseek = iseek + result.written
+        new_oseek = oseek + result.written
+        if new_iseek == new_oseek:
+            result.continue_cmd = (
+                f"randquik -s {seed_for_display} --seek {new_iseek} -o {args.output}"
             )
+        else:
+            result.continue_cmd = f"randquik -s {seed_for_display} --iseek {new_iseek} --oseek {new_oseek} -o {args.output}"
+        if args.len:
+            result.continue_cmd += f" -l {args.len}"
 
-        progress_state = {"written": 0}
-        progress = ProgressDisplay(total_bytes, start_time, progress_state, seed=seed_for_display)
-        if not args.quiet:
-            progress.start()
+    # Print summary
+    show_summary = not args.quiet or args.verbose >= 1 or result.interrupted
+    if show_summary and (total_bytes is not None or result.interrupted):
+        result.print_summary(verbose=args.verbose)
+    if args.verbose >= 2:
+        result.print_detailed_stats()
 
-        try:
-            producer.start()
-            producer.run(progress_state)
-        finally:
-            producer.stop()
-            progress.stop()
-            elapsed = time.perf_counter() - start_time
-            if not args.quiet:
-                print_summary(producer.written, elapsed, "wrote", seed=seed_for_display)
-            if args.verbose:
-                print(producer.format_stats_report(), file=sys.stderr)
+    if result.interrupted:
+        sys.exit(1)
 
 
 def main():

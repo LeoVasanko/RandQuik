@@ -3,56 +3,13 @@
 import pathlib
 import re
 import sys
-import time
 
 __all__ = [
-    "format_size",
-    "format_time",
     "get_output_size",
     "get_sector_size",
     "parse_size",
-    "print_summary",
+    "sparse_range",
 ]
-
-
-def format_size(size: float) -> str:
-    """Format bytes as human-readable size."""
-    for unit in ["B", "kB", "MB", "GB", "TB"]:
-        if abs(size) < 1000:
-            return f"{size:.0f}{unit}"
-        size /= 1000
-    return f"{size:.0f}PB"
-
-
-def format_time(seconds: float) -> str:
-    """Format seconds as human-readable time."""
-    if seconds < 0:
-        return "--"
-    if seconds < 1:
-        return f"{seconds * 1000:.0f}ms"
-    if seconds < 90:
-        return f"{seconds:.0f}s"
-    elif seconds < 5400:  # 90 minutes
-        m = int(seconds / 60)
-        return f"{m}m"
-    elif seconds < 172800:  # 48 hours
-        h = int(seconds / 3600)
-        return f"{h}h"
-    else:
-        d = int(seconds / 86400)
-        return f"{d}d"
-
-
-def print_summary(written: int, elapsed: float, action: str = "wrote", seed: str | None = None):
-    """Print a nice one-liner summary."""
-    speed_gbs = (written / 1_000_000_000) / elapsed if elapsed > 0 else 0
-    size_str = format_size(written)
-    time_str = format_time(elapsed)
-    seed_hint = f" [-s {seed}]" if seed else ""
-    print(
-        f"RandQuik {action} {size_str} in {time_str} ({speed_gbs:.2f} GB/s){seed_hint}",
-        file=sys.stderr,
-    )
 
 
 # Cache for sector size lookup (path -> size)
@@ -223,15 +180,3 @@ def sparse_range(n: int, max_items: int = 9) -> list[int]:
         out[-1] = n
 
     return out
-
-
-def stopwatch():
-    t = time.perf_counter()
-
-    def _generator():
-        nonlocal t
-        while True:
-            t, t0 = time.perf_counter(), t
-            yield t - t0
-
-    return _generator()
