@@ -1,8 +1,12 @@
 # The World's Fastest Random Generator v2
 
+![RandQuik v2 Benchmark Stats](https://github.com/LeoVasanko/RandQuik/raw/main/docs/v2stat.webp)
+*RandQuik running at full speed on a Macbook laptop, writing /dev/null.*
+
 I was disappointed with the sad state of random number generators. Many languages don't ship anything useful and some are stuck with whatever the OS provides. Most existing implementations are slow, often maxing out at a few hundred megabytes per second, which becomes a real bottleneck in high-throughput systems.
 
 Secondly, [flaws have been found](https://numpy.org/doc/stable/reference/random/upgrading-pcg64.html) in popular non-cryptographic algorithms such as Mersenne Twister and PCG-style generators. These issues range from detectable structure to repeating sequences, making them unsuitable for serious or long-running workloads.
+
 
 The cryptographic alternative is simply better. Proper CSPRNGs avoid these pitfalls entirely and, on modern hardware, can now be *faster* than legacy non-cryptographic designs. There is little reason left to accept weaker guarantees for worse performance.
 
