@@ -34,9 +34,6 @@ def bench_mode(
     else:
         raise ValueError(f"Unknown io_mode: {io_mode}")
 
-    if "mmap" in io_mode:
-        iocmd.append("--mmap")
-
     # Print iocmd at start of row
     print(f"{' '.join(iocmd)[:20]:<20}", end="", flush=True)
 
@@ -118,35 +115,19 @@ def run_benchmark(args):
     print()
     print("-" * (20 + 8 * len(tcounts)))
 
-    for io_mode in ["dry", "dry-mmap", "null", "file", "file-mmap"]:
+    for io_mode in ["dry", "null", "file"]:
         results = bench_mode(tcounts, io_mode, length, alg=args.alg, bench_file=bench_file)
         all_results[io_mode] = results
 
     print("-" * (20 + 8 * len(tcounts)))
 
-    # Find best for file output
-    best_speed = 0.0
-    best_iocmd = None
-    best_threads = 0
-    for io_mode in ["file", "file-mmap"]:
-        for w, sp, iocmd in all_results.get(io_mode, []):
-            if sp > best_speed:
-                best_speed = sp
-                best_iocmd = iocmd
-                best_threads = w
-
-    # Find fastest generation speed
-    gen_speed = 0.0
-    for io_mode in all_results:
-        for _w, sp, _iocmd in all_results.get(io_mode, []):
-            if sp > gen_speed:
-                gen_speed = sp
-
-    if best_iocmd:
-        threads = f" -t{best_threads}" if best_threads != 1 else ""
-        print(
-            f"\n>>> Fastest wrote {best_speed:.2f} GB/s, plain RNG {gen_speed:.0f} GB/s\n"
-            f"randquik {' '.join(best_iocmd)}{threads}\n"
-        )
-    else:
-        print("\nNo file output results collected.", file=sys.stderr)
+    # Find fastest configuration and RNG speed
+    gen_speed = max(r[1] for res in all_results.values() for r in res)
+    best_speed, best_threads, best_iocmd = max(
+        [(sp, w, iocmd) for w, sp, iocmd in all_results["file"]],
+    )
+    threads = f" -t{best_threads}" if best_threads != 1 else ""
+    print(
+        f"\n>>> Fastest wrote {best_speed:.2f} GB/s, plain RNG {gen_speed:.0f} GB/s\n"
+        f"randquik {' '.join(best_iocmd)}{threads}\n"
+    )

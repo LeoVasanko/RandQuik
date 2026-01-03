@@ -2,7 +2,6 @@
 
 import argparse
 import gc
-import mmap
 import os
 import sys
 import time
@@ -20,7 +19,6 @@ from randquik.utils import (
 from randquik.workers import (
     BLOCK_SIZE,
     FdProducer,
-    MmapProducer,
 )
 
 __all__ = ["main"]
@@ -56,18 +54,6 @@ def parse_seeks(args):
     except ValueError as e:
         raise ValueError(f"Error parsing seek: {e}") from None
     return iseek, oseek
-
-
-def _mmap(output: str | None, oseek: int, length: int, *, dry=False) -> mmap.mmap:
-    with open_fd(output, length, oseek=oseek, dry=dry) as fd:
-        try:
-            return mmap.mmap(fd, length)
-        except (OSError, ValueError) as e:
-            if fd == -1:
-                raise ValueError("Cannot mmap all memory: specify --len SIZE") from e
-            if not output:
-                raise ValueError("Cannot mmap stdout: remove --mmap or use -o FILE") from e
-            raise ValueError(f"Cannot mmap {output}: {e}") from e
 
 
 def singlethreaded(args, total_bytes, oseek, start_time, key, seed_for_display):
@@ -147,11 +133,6 @@ def _main():
         default=None,
     )
     parser.add_argument(
-        "--mmap",
-        action="store_true",
-        help="Use file-backed mmap for output instead of writing via fd",
-    )
-    parser.add_argument(
         "--benchmark",
         action="store_true",
         help="Run benchmark (generates 1GB and reports speed)",
@@ -224,50 +205,8 @@ def _main():
         return singlethreaded(args, total_bytes, oseek, start_time, key, seed_for_display)
 
     workers = args.threads if args.threads is not None else 1
-    # File-backed mmap output
-    if args.mmap:
-        with (
-            _mmap(
-                args.output,
-                oseek,
-                length=oseek + (total_bytes if total_bytes is not None else 0),
-                dry=args.dry,
-            ) as mm,
-        ):
-            producer = MmapProducer(
-                workers,
-                key,
-                ciph,
-                total_bytes,
-                mm,
-                use_madvise=True,
-                oseek=oseek,
-                iseek=iseek,
-            )
-            progress_state = {"written": 0}
-            producer.progress_state = progress_state
-            producer.start()
 
-            progress = ProgressDisplay(
-                total_bytes, start_time, progress_state, seed=seed_for_display
-            )
-            if not args.quiet:
-                progress.start()
-
-            try:
-                producer.join()
-            finally:
-                progress.stop()
-        elapsed = time.perf_counter() - start_time
-        if not args.quiet:
-            print_summary(producer.written, elapsed, "wrote", seed=seed_for_display)
-        if args.verbose:
-            stats = producer.get_combined_stats()
-            print(stats.format_report(f"Workers (×{workers})"), file=sys.stderr)
-        producer.cleanup()
-        return
-
-    # Standard file mode with ring buffers
+    # File mode with ring buffers
     with open_fd(args.output, total_bytes, dry=args.dry, oseek=oseek) as fd:
         producer = FdProducer(
             workers, key, ciph, total_bytes, fd, dry=args.dry, iseek=iseek, profile=args.verbose
