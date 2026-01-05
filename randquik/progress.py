@@ -1,4 +1,4 @@
-"""Full-screen progress display with speed graph."""
+"""Progress display with speed graph at bottom of terminal."""
 
 import math
 import os
@@ -6,19 +6,25 @@ import sys
 import threading
 import time
 
-from randquik.stats import format_time
+from randquik.stats import format_size, format_time
 
 __all__ = ["ProgressDisplay"]
 
 # Unicode block characters for graph (8 levels per cell)
 GRAPH_BLOCKS = " ▁▂▃▄▅▆▇█"
 
+# Maximum height of progress display in terminal rows
+MAX_HEIGHT = 10
+
 
 class ProgressDisplay:
-    """Full-screen progress display with speed graph, updated every 100ms.
+    """Progress display with speed graph at bottom of terminal, updated every 100ms.
 
     Only active when stderr is a tty. Reads progress from a shared state dict
     with a single 'written' key. All display logic is encapsulated here.
+
+    Uses the bottom portion of the terminal with a scrolling region preserved
+    at the top, allowing normal output to scroll above the progress display.
 
     The graph fills from left to right as progress advances, doubling as both
     a progress bar and a speed-over-time visualization.
@@ -30,11 +36,15 @@ class ProgressDisplay:
         start_time: float,
         state: dict,
         infinite: bool | None = None,
+        output_name: str | None = None,
+        oseek: int = 0,
     ):
         self.total_bytes = total_bytes
         self.start_time = start_time
         self.state = state  # Must have 'written' key
         self.infinite = infinite if infinite is not None else total_bytes is None
+        self.output_name = output_name or "<stdout>"
+        self.oseek = oseek
         self.active = sys.stderr.isatty()
         self._stop = threading.Event()
         self._thread = None
@@ -43,14 +53,20 @@ class ProgressDisplay:
         # Speed history for graph - fixed size, filled from left as progress advances
         self._graph_width = 80  # Will be updated on first render
         self._speed_history: list[float] = []  # Stores GB/s values, one per column
-        self._max_speed: float = 0.1  # Start with small value to avoid div by zero
+        self._max_speed: float = 0.01  # Start with small value to avoid div by zero
         # For infinite mode: track time of each speed sample
         self._time_history: list[float] = []
+        # X-axis scale smoothing (hysteresis for estimated total time)
+        self._smoothed_scale_time: float | None = None
+        # Terminal handling
+        self._current_scroll_bottom: int | None = None
+        self._hidden_cursor = False
+        self._first_draw = True
 
     def start(self):
         if not self.active:
             return
-        self._save_terminal_state()
+        self._setup_terminal_state()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -59,18 +75,58 @@ class ProgressDisplay:
             return
         self._stop.set()
         self._thread.join(timeout=0.5)
+        # Final render so the finished state stays on screen
+        if self.active:
+            cols, rows, lines, overlay = self._render_frame()
+            self._draw_frame(cols, rows, lines, overlay)
         self._restore_terminal_state()
 
-    def _save_terminal_state(self):
-        """Save terminal state and enter alternate screen buffer."""
-        sys.stderr.write("\x1b[?1049h")  # Enter alternate screen buffer
-        sys.stderr.write("\x1b[?25l")  # Hide cursor
+    def _setup_terminal_state(self):
+        """Prepare terminal: hide cursor and start using bottom reserved block."""
+        sys.stderr.write("\x1b[?25l")  # Hide cursor to reduce flicker
         sys.stderr.flush()
+        self._hidden_cursor = True
+
+    def _get_smoothed_speed(self, window_secs: float = 1.0) -> float:
+        """Calculate average speed over the last window_secs seconds.
+
+        Returns speed in bytes/sec, averaged from recent samples in _speed_history.
+        Falls back to the most recent sample if not enough history.
+        """
+        if not self._speed_history or not self._time_history:
+            return 0.0
+
+        current_time = self._time_history[-1]
+        cutoff_time = current_time - window_secs
+
+        # Find samples within the window
+        total_speed = 0.0
+        count = 0
+        for idx in range(len(self._time_history) - 1, -1, -1):
+            if self._time_history[idx] < cutoff_time:
+                break
+            total_speed += self._speed_history[idx]
+            count += 1
+
+        if count == 0:
+            return self._speed_history[-1] * 1_000_000_000
+
+        # Return average in bytes/sec (speed_history stores GB/s)
+        return (total_speed / count) * 1_000_000_000
 
     def _restore_terminal_state(self):
-        """Restore terminal state and exit alternate screen buffer."""
-        sys.stderr.write("\x1b[?25h")  # Show cursor
-        sys.stderr.write("\x1b[?1049l")  # Exit alternate screen buffer
+        """Restore terminal scrolling and cursor after progress is done."""
+        # Reset scrolling region to full screen
+        sys.stderr.write("\x1b[r")
+        self._current_scroll_bottom = None
+
+        # Move cursor to a fresh line under the progress block
+        cols, rows = self._get_terminal_size()
+        sys.stderr.write(f"\x1b[{rows};1H\n")
+
+        if self._hidden_cursor:
+            sys.stderr.write("\x1b[?25h")
+            self._hidden_cursor = False
         sys.stderr.flush()
 
     def _get_terminal_size(self) -> tuple[int, int]:
@@ -113,7 +169,7 @@ class ProgressDisplay:
             elif normalized >= row_top:
                 filled_chars.append("█")
             else:
-                level = int(normalized - row_bottom)
+                level = math.ceil(normalized - row_bottom)
                 filled_chars.append(GRAPH_BLOCKS[min(level, 8)])
 
         # Build unfilled portion (dim grey at avg_speed level)
@@ -132,24 +188,103 @@ class ProgressDisplay:
         filled_str = "".join(filled_chars)
         unfilled_str = "".join(unfilled_chars)
         if unfilled_str:
-            return f"{filled_str}\x1b[0m\x1b[38;5;234m{unfilled_str}\x1b[0m\x1b[33m"
+            return f"{filled_str}\x1b[0m\x1b[38;5;235m{unfilled_str}\x1b[0m\x1b[33m"
         return filled_str
 
-    def _render_full_screen(self) -> str:
-        """Render the full screen display."""
-        if self.infinite:
-            return self._render_infinite_screen()
-        return self._render_progress_screen()
+    def _build_header(
+        self,
+        cols: int,
+        written: int,
+        speed: float,
+        elapsed: float,
+        eta: float | None = None,
+        total_bytes: int | None = None,
+    ) -> str:
+        """Build the header line with stats, output name, and position.
 
-    def _render_infinite_screen(self) -> str:
-        """Render screen for infinite mode (no known total)."""
-        cols, rows = self._get_terminal_size()
+        Args:
+            cols: Terminal width
+            written: Bytes written so far
+            speed: Current speed in bytes/sec
+            elapsed: Elapsed time in seconds
+            eta: Estimated time remaining (None for infinite mode)
+            total_bytes: Total bytes to write (None for infinite mode)
+        """
+        spinner = "\u25d0\u25d3\u25d1\u25d2"[int(elapsed * 4) % 4]
+        written_gb = written / 1_000_000_000
+        speed_gbs = speed / 1_000_000_000
+
+        # Build the fixed stats portion
+        if total_bytes is not None:
+            # Finite mode: show progress and ETA
+            total_gb = total_bytes / 1_000_000_000
+            eta_str = format_time(eta) if eta is not None else "--"
+            stats = (
+                f"\x1b[1;36mRandQuik {spinner}\x1b[0m  "
+                f"{written_gb:6.2f}\x1b[2m/\x1b[0m{total_gb:.2f} GB  "
+            )
+            stats += (
+                f"\x1b[2m@\x1b[0m {speed_gbs:5.2f} GB/s  \x1b[2mest.\x1b[0m {eta_str:<8}"
+                if written < total_bytes
+                else f"\x1b[2m{'done':>27}\x1b[0m"
+            )
+
+            # Visible: "RandQuik X  " (14) + "XXXX.XX/XXXX.XX GB  " (20) + "@ XX.XX GB/s  " (15) + "est. XXXXXXXX" (13) = 62
+            stats_len = 62
+        else:
+            # Infinite mode: show written and elapsed
+            stats = (
+                f"  \x1b[1;36mRandQuik {spinner}\x1b[0m  "
+                f"{written_gb:6.2f} GB \x1b[2m\u221e\x1b[0m  "
+                f"\x1b[2m@\x1b[0m {speed_gbs:5.2f} GB/s  "
+                f"\x1b[2m\u2502\x1b[0m  {format_time(elapsed):>8}"
+            )
+            # Visible: "  RandQuik X  " (16) + "XXXX.XX GB \u221e  " (14) + "@ XX.XX GB/s  " (15) + "\u2502  XXXXXXXX" (11) = 56
+            stats_len = 56
+
+        # Build position suffix if oseek was used
+        if self.oseek > 0:
+            file_pos = self.oseek + written
+            pos_str = format_size(file_pos).replace(" ", "")
+            if total_bytes is not None:
+                pos_suffix = f" \x1b[2m[\x1b[0m{pos_str}\x1b[2m]\x1b[0m"
+                pos_suffix_len = 3 + len(pos_str)  # " []" + size
+            else:
+                pos_suffix = f" \x1b[2m@\x1b[0m{pos_str}"
+                pos_suffix_len = 2 + len(pos_str)  # " @" + size
+        else:
+            pos_suffix = ""
+            pos_suffix_len = 0
+
+        # Calculate available space for filename
+        # Format: {stats}  > {name}{pos_suffix}
+        available = cols - stats_len - 4 - pos_suffix_len  # 4 for "  > "
+        name = self.output_name
+        if len(name) > available > 3:
+            name = "\u2026" + name[-(available - 1) :]
+        elif available <= 3:
+            name = ""
+
+        if name:
+            return f"{stats}  \x1b[2m>\x1b[0m {name}{pos_suffix}"
+        return stats
+
+    def _render_progress_block(
+        self, cols: int, rows: int, max_height: int
+    ) -> tuple[list[str], tuple[int, int, str] | None]:
+        """Render the progress block constrained to max_height lines."""
+        if self.infinite:
+            return self._render_infinite_block(cols, rows, max_height), None
+        return self._render_finite_block(cols, rows, max_height)
+
+    def _render_infinite_block(self, cols: int, rows: int, max_height: int) -> list[str]:
+        """Render progress block for infinite mode (no known total)."""
         written = self.state.get("written", 0)
         now = time.perf_counter()
         elapsed = now - self.start_time
 
         # Calculate graph width (leave room for Y-axis labels)
-        graph_width = cols - 8
+        graph_width = max(10, cols - 8)
         self._graph_width = graph_width
 
         # Calculate speeds
@@ -169,27 +304,23 @@ class ProgressDisplay:
             self._max_speed = speed_gbs
         scale_max = self._nice_scale(self._max_speed)
 
+        # Use smoothed speed for header display
+        display_speed = self._get_smoothed_speed()
+
         # Build output
-        lines = []
-        lines.append("\x1b[2J\x1b[H")
-
-        # Compact header with stats
-        spinner = "◐◓◑◒"[int(elapsed * 4) % 4]
-        written_gb = written / 1_000_000_000
-        current_speed = instant_speed / 1_000_000_000
-        header = (
-            f"  \x1b[1;36mRandQuik {spinner}\x1b[0m  "
-            f"\x1b[2m│\x1b[0m  {written_gb:6.2f} GB \x1b[2m∞\x1b[0m  "
-            f"\x1b[2m@\x1b[0m {current_speed:5.2f} GB/s  "
-            f"\x1b[2m│\x1b[0m  {format_time(elapsed):>8}"
-        )
+        lines: list[str] = []
+        header = self._build_header(cols, written, display_speed, elapsed)
         lines.append(header)
-        lines.append("")
 
-        # Calculate graph dimensions (footer_lines includes GB/s label, time axis, and footer)
-        header_lines = len(lines)
-        footer_lines = 4
-        graph_rows = max(3, rows - header_lines - footer_lines)
+        # Calculate graph dimensions based on remaining height
+        # Layout: [header][GB/s label][graph rows][time axis]
+        remaining_after_label = max_height - len(lines) - 2
+
+        if remaining_after_label < 1:
+            # Terminal is too short; fall back to header-only view
+            return lines
+
+        graph_rows = max(1, remaining_after_label)
 
         # Downsample speed history for display - average samples within each column's time range
         min_scale_time = 10.0
@@ -224,12 +355,14 @@ class ProgressDisplay:
 
         avg_speed_gbs = overall_speed / 1_000_000_000
 
-        # Add GB/s label above the graph
-        lines.append(" \x1b[36mGB/s\x1b[0m")
+        # Use MB/s scale if max speed < 1 GB/s
+        use_mb = scale_max < 1
+        unit_label = "MB/s" if use_mb else "GB/s"
+        lines.append(f" \x1b[36m{unit_label}\x1b[0m")
 
         # Compute nice Y-axis tick values and map each to its best row
         nice_ticks = self._nice_y_ticks(scale_max, graph_rows)
-        row_labels = self._assign_ticks_to_rows(nice_ticks, scale_max, graph_rows)
+        row_labels = self._assign_ticks_to_rows(nice_ticks, scale_max, graph_rows, use_mb)
 
         for row in range(graph_rows):
             graph_line = self._render_graph_row(
@@ -250,15 +383,12 @@ class ProgressDisplay:
         time_axis = self._build_infinite_time_axis(graph_width, scale_time)
         lines.append(f"      {''.join(time_axis)}")
 
-        # Footer
-        lines.append(f"\x1b[2m{'[Ctrl+C to stop]':^{cols}}\x1b[0m")
-
-        return "\n".join(lines)
+        return lines
 
     def _nice_scale(self, max_speed: float) -> float:
         """Round up to next nice number for scale."""
-        if max_speed <= 0.1:
-            return 0.1
+        if max_speed <= 0.01:
+            return 0.01
         log_val = math.log10(max_speed)
         power = math.floor(log_val)
         mantissa = max_speed / (10**power)
@@ -268,8 +398,15 @@ class ProgressDisplay:
             power += 1
         return nice_mantissa * (10**power)
 
-    def _format_label(self, val: float) -> str:
-        """Format Y-axis label."""
+    def _format_label(self, val: float, use_mb: bool = False) -> str:
+        """Format Y-axis label.
+
+        Args:
+            val: Value in GB/s (will be converted to MB/s if use_mb is True)
+            use_mb: If True, multiply by 1000 and format as MB/s values
+        """
+        if use_mb:
+            val = val * 1000  # Convert GB/s to MB/s
         if val == 0:
             return "0"
         elif val >= 1:
@@ -313,16 +450,22 @@ class ProgressDisplay:
         return ticks
 
     def _assign_ticks_to_rows(
-        self, ticks: list[float], scale_max: float, graph_rows: int
+        self, ticks: list[float], scale_max: float, graph_rows: int, use_mb: bool = False
     ) -> dict[int, str]:
         """Assign each tick to the row closest to its value.
 
         Returns a dict mapping row index to formatted label string.
         Each tick is assigned to exactly one row.
+
+        Args:
+            ticks: List of tick values in GB/s
+            scale_max: Maximum scale value in GB/s
+            graph_rows: Number of rows in the graph
+            use_mb: If True, format labels as MB/s instead of GB/s
         """
         row_labels: dict[int, str] = {}
         if graph_rows <= 1 or scale_max <= 0:
-            return {0: f"{self._format_label(ticks[0] if ticks else 0):>4}"}
+            return {0: f"{self._format_label(ticks[0] if ticks else 0, use_mb):>4}"}
 
         for tick in ticks:
             # Calculate which row this tick value corresponds to
@@ -333,7 +476,7 @@ class ProgressDisplay:
 
             # Only assign if row is not already taken (first tick wins)
             if best_row not in row_labels:
-                row_labels[best_row] = f"{self._format_label(tick):>4}"
+                row_labels[best_row] = f"{self._format_label(tick, use_mb):>4}"
 
         return row_labels
 
@@ -368,14 +511,20 @@ class ProgressDisplay:
             """Format time for axis label."""
             if secs == 0:
                 return "0"
-            elif secs < 60:
+            elif secs < 120:
                 return f"{int(secs)}s"
             elif secs < 3600:
                 m = int(secs // 60)
-                return f"{m}m"
+                s = int(secs % 60)
+                if s == 0:
+                    return f"{m}m"
+                return f"{m}m{s}s"
             else:
                 h = int(secs // 3600)
-                return f"{h}h"
+                m = int((secs % 3600) // 60)
+                if m == 0:
+                    return f"{h}h"
+                return f"{h}h{m}m"
 
         # Find a nice interval that gives us ~4-8 labels
         interval = nice_intervals[-1]
@@ -400,15 +549,16 @@ class ProgressDisplay:
 
         return time_axis
 
-    def _render_progress_screen(self) -> str:
-        """Render the full screen display for finite progress."""
-        cols, rows = self._get_terminal_size()
+    def _render_finite_block(
+        self, cols: int, rows: int, max_height: int
+    ) -> tuple[list[str], tuple[int, int, str] | None]:
+        """Render the progress block for finite progress."""
         written = self.state.get("written", 0)
         now = time.perf_counter()
         elapsed = now - self.start_time
 
         # Calculate graph width (leave room for Y-axis labels)
-        graph_width = cols - 8
+        graph_width = max(10, cols - 8)
         self._graph_width = graph_width
 
         # Calculate speeds
@@ -418,110 +568,131 @@ class ProgressDisplay:
         self._last_written = written
         self._last_time = now
 
+        # Collect time-based speed samples (like infinite mode)
+        speed_gbs = instant_speed / 1_000_000_000
+        self._speed_history.append(speed_gbs)
+        self._time_history.append(elapsed)
+
+        # Use smoothed speed for header display and ETA
+        display_speed = self._get_smoothed_speed()
+
         # ETA and total estimated time
         remaining = self.total_bytes - written
-        # ETA based on current instant speed for responsiveness
-        eta = remaining / instant_speed if instant_speed > 0 else -1
-        # Graph X-axis scaling based on average speed for stability
+        # ETA based on smoothed speed for stability
+        eta = remaining / display_speed if display_speed > 0 else -1
+        # Graph X-axis scaling based on overall average speed for stability
         avg_eta = remaining / overall_speed if overall_speed > 0 else -1
         estimated_total_time = elapsed + avg_eta if avg_eta > 0 else elapsed
+
+        # Apply hysteresis to scale_time to prevent jumping
+        # Only update if change is significant (>20%) or if new estimate is larger
+        raw_scale_time = max(estimated_total_time, 1.0)
+        if self._smoothed_scale_time is None:
+            self._smoothed_scale_time = raw_scale_time
+        else:
+            # Always grow immediately, shrink only gradually
+            if raw_scale_time > self._smoothed_scale_time:
+                self._smoothed_scale_time = raw_scale_time
+            else:
+                # Shrink slowly: blend 90% old, 10% new
+                self._smoothed_scale_time = 0.9 * self._smoothed_scale_time + 0.1 * raw_scale_time
+        scale_time = self._smoothed_scale_time
 
         # Progress percentage (for display)
         pct = min(100, written * 100 / self.total_bytes) if self.total_bytes > 0 else 0
 
-        # Time-based progress: columns represent time, not percentage
-        # Graph fills based on elapsed / estimated_total_time
-        # Use ceiling so column appears when we've started it, not when complete
-        if estimated_total_time > 0:
-            time_pct = min(100, elapsed * 100 / estimated_total_time)
+        # Update max speed
+        if speed_gbs > self._max_speed:
+            self._max_speed = speed_gbs
+        scale_max = self._nice_scale(self._max_speed)
+
+        # Build output
+        lines: list[str] = []
+        header = self._build_header(
+            cols, written, display_speed, elapsed, eta=eta, total_bytes=self.total_bytes
+        )
+        lines.append(header)
+
+        # Calculate graph dimensions based on remaining height
+        # Layout: [header][GB/s label][graph rows][time axis]
+        remaining_after_label = max_height - len(lines) - 2
+
+        if remaining_after_label < 1:
+            # Terminal is too short; fall back to a compact header-only view
+            return lines, None
+
+        graph_rows = max(1, remaining_after_label)
+
+        # Downsample speed history for display - average samples within each column's time range
+        # Graph fills based on elapsed / scale_time (smoothed)
+        col_width_time = scale_time / (graph_width - 1) if graph_width > 1 else scale_time
+
+        # Calculate how many columns should be filled based on elapsed time
+        if scale_time > 0:
+            time_pct = min(100, elapsed * 100 / scale_time)
         else:
             time_pct = 100
         target_cols = min(graph_width, int(graph_width * time_pct / 100) + 1) if time_pct > 0 else 0
 
-        # Update speed history - add new sample if we've advanced to a new column
-        speed_gbs = instant_speed / 1_000_000_000
-        if len(self._speed_history) < target_cols:
-            # Fill in any skipped columns with the current speed
-            while len(self._speed_history) < target_cols:
-                self._speed_history.append(speed_gbs)
-        elif len(self._speed_history) > 0 and target_cols > 0:
-            # Update the current column with latest speed (smoothing)
-            self._speed_history[-1] = (self._speed_history[-1] + speed_gbs) / 2
-
-        # Update max speed - use "nice" scale values (1, 2, 3, ..., 9 × 10^N), minimum 0.1 GB/s
-        if speed_gbs > self._max_speed:
-            self._max_speed = speed_gbs
-        # Round up to next "nice" number: 0.1, 0.2, ..., 0.9, 1, 2, ..., 9, 10, 20, ...
-        if self._max_speed <= 0.1:
-            scale_max = 0.1
-        else:
-            # Find the power of 10 just below max_speed
-            log_val = math.log10(self._max_speed)
-            power = math.floor(log_val)
-            # Get the leading digit and round up
-            mantissa = self._max_speed / (10**power)
-            nice_mantissa = math.ceil(mantissa)
-            if nice_mantissa > 9:
-                nice_mantissa = 1
-                power += 1
-            scale_max = nice_mantissa * (10**power)
-
-        # Build output
-        lines = []
-        lines.append("\x1b[2J\x1b[H")
-
-        # Compact header with stats
-        spinner = "◐◓◑◒"[int(elapsed * 4) % 4]
-        current_speed = instant_speed / 1_000_000_000
-        written_gb = written / 1_000_000_000
-        total_gb = self.total_bytes / 1_000_000_000
-        header = (
-            f"  \x1b[1;36mRandQuik {spinner}\x1b[0m  "
-            f"\x1b[2m│\x1b[0m  {written_gb:6.2f}\x1b[2m/\x1b[0m{total_gb:.2f} GB  "
-            f"\x1b[2m@\x1b[0m {current_speed:5.2f} GB/s  "
-            f"ETA {format_time(eta):>8}"
-        )
-        lines.append(header)
-        lines.append("")
-
-        # Calculate graph dimensions (footer_lines includes GB/s label, time axis, and footer)
-        header_lines = len(lines)
-        footer_lines = 4
-        graph_rows = max(3, rows - header_lines - footer_lines)
+        display_values = []
+        for col in range(target_cols):
+            col_time = col / (graph_width - 1) * scale_time if graph_width > 1 else 0
+            if col_time > elapsed:
+                break
+            # Find all samples within this column's time range
+            col_start = col_time - col_width_time / 2
+            col_end = col_time + col_width_time / 2
+            samples = [
+                self._speed_history[idx]
+                for idx, t in enumerate(self._time_history)
+                if col_start <= t <= col_end
+            ]
+            if samples:
+                display_values.append(sum(samples) / len(samples))
+            elif self._speed_history:
+                # Fallback to closest if no samples in range
+                best_idx = 0
+                best_diff = float("inf")
+                for idx, t in enumerate(self._time_history):
+                    diff = abs(t - col_time)
+                    if diff < best_diff:
+                        best_diff = diff
+                        best_idx = idx
+                display_values.append(self._speed_history[best_idx])
 
         # Render graph rows with Y-axis
         avg_speed_gbs = overall_speed / 1_000_000_000
 
-        # Add GB/s label above the graph
-        lines.append(" \x1b[36mGB/s\x1b[0m")
+        # Use MB/s scale if max speed < 1 GB/s
+        use_mb = scale_max < 1
+        unit_label = "MB/s" if use_mb else "GB/s"
+        lines.append(f" \x1b[36m{unit_label}\x1b[0m")
 
         # Compute nice Y-axis tick values and map each to its best row
         nice_ticks = self._nice_y_ticks(scale_max, graph_rows)
-        row_labels = self._assign_ticks_to_rows(nice_ticks, scale_max, graph_rows)
+        row_labels = self._assign_ticks_to_rows(nice_ticks, scale_max, graph_rows, use_mb)
 
         for row in range(graph_rows):
             graph_line = self._render_graph_row(
-                self._speed_history,
+                display_values,
                 scale_max,
                 row,
                 graph_rows,
                 graph_width,
                 avg_speed_gbs,
             )
+            graph_line = graph_line.ljust(graph_width)
             # Y-axis label from pre-computed mapping
             label = row_labels.get(row, "    ")
             lines.append(f" \x1b[36m{label}\x1b[0m \x1b[33m{graph_line}\x1b[0m")
 
         # Time labels on X-axis with nice intervals
-        time_axis = self._build_time_axis(graph_width, estimated_total_time)
+        time_axis = self._build_time_axis(graph_width, scale_time)
         lines.append(f"      {''.join(time_axis)}")
 
-        # Footer
-        lines.append(f"\x1b[2m{'[Ctrl+C to abort]':^{cols}}\x1b[0m")
-
         # Position percentage at top of bar at current progress point
-        # Find the height of the bar at current progress (last value in speed_history)
-        current_speed_gbs = self._speed_history[-1] if self._speed_history else 0
+        # Find the height of the bar at current progress (last value in display_values)
+        current_speed_gbs = display_values[-1] if display_values else 0
         # Normalize to find which row the top of the bar is at
         # Bar fills from bottom up; row 0 is top, graph_rows-1 is bottom
         if scale_max > 0 and current_speed_gbs > 0:
@@ -533,17 +704,15 @@ class ProgressDisplay:
         else:
             bar_top_row = graph_rows - 1  # At bottom if no speed
 
-        # Graph starts at row 4 (1-indexed: header=1, empty=2, GB/s=3, first graph row=4)
-        # Column offset is 6 (space + 4 char Y-label + space)
-        progress_col = int(pct / 100 * (graph_width - 1)) + 7  # +7 for Y-axis offset (1-indexed)
+        # Overlay position inside the progress block
+        progress_col = int(pct / 100 * (graph_width - 1)) + 7
         pct_label = f"{int(pct)}%"
-        # Center the label on the progress point
-        pct_col = max(7, progress_col - len(pct_label) // 2)
-        # Calculate screen row (1-indexed for ANSI)
-        pct_row = 4 + bar_top_row
-        pct_position = f"\x1b[{pct_row};{pct_col}H\x1b[1;37m{pct_label}\x1b[0m"
+        pct_col = max(7, min(cols, progress_col - len(pct_label) // 2))
+        first_graph_row = len(lines) - (graph_rows + 2)
+        pct_row_offset = first_graph_row + bar_top_row
+        pct_position = (pct_row_offset, pct_col, f"\x1b[1;37m{pct_label}\x1b[0m")
 
-        return "\n".join(lines) + pct_position
+        return lines, pct_position
 
     def _build_time_axis(self, graph_width: int, estimated_total_time: float) -> list[str]:
         """Build time axis with nice interval labels."""
@@ -575,12 +744,22 @@ class ProgressDisplay:
 
         def format_time_short(secs):
             """Format time for axis label."""
-            if secs < 60:
+            if secs == 0:
+                return "0s"
+            elif secs < 120:
                 return f"{int(secs)}s"
             elif secs < 3600:
-                return f"{int(secs // 60)}m"
+                m = int(secs // 60)
+                s = int(secs % 60)
+                if s == 0:
+                    return f"{m}m"
+                return f"{m}m{s}s"
             else:
-                return f"{int(secs // 3600)}h"
+                h = int(secs // 3600)
+                m = int((secs % 3600) // 60)
+                if m == 0:
+                    return f"{h}h"
+                return f"{h}h{m}m"
 
         time_axis = [" "] * graph_width
         if estimated_total_time > 0:
@@ -606,9 +785,60 @@ class ProgressDisplay:
 
         return time_axis
 
+    def _render_frame(self) -> tuple[int, int, list[str], tuple[int, int, str] | None]:
+        cols, rows = self._get_terminal_size()
+        max_height = min(MAX_HEIGHT, rows) if rows > 0 else MAX_HEIGHT
+        lines, overlay = self._render_progress_block(cols, rows, max_height)
+        # Guard against empty renders
+        if not lines:
+            lines = [""]
+        return cols, rows, lines, overlay
+
+    def _draw_frame(
+        self, cols: int, rows: int, lines: list[str], overlay: tuple[int, int, str] | None
+    ):
+        """Draw the progress block at the bottom of the terminal."""
+        height = min(len(lines), max(1, rows))
+        progress_top = max(1, rows - height + 1)
+
+        # Build entire frame as a single string
+        buf: list[str] = []
+
+        # On first draw, scroll terminal up to make room for progress block
+        if self._first_draw:
+            self._first_draw = False
+            buf.append("\n" * height)
+
+        # Update scrolling region so other output scrolls above the progress block
+        top = 1
+        bottom = max(1, rows - height)
+        if self._current_scroll_bottom != bottom:
+            buf.append(f"\x1b[{top};{bottom}r")
+            self._current_scroll_bottom = bottom
+
+        # Paint each progress line
+        for idx in range(height):
+            row = progress_top + idx
+            line = lines[idx]
+            buf.append(f"\x1b[{row};1H\x1b[2K{line}")
+
+        # Overlay (e.g., percent marker)
+        if overlay:
+            row_offset, col, text = overlay
+            abs_row = progress_top + row_offset
+            abs_col = max(1, min(cols, col))
+            buf.append(f"\x1b[{abs_row};{abs_col}H{text}")
+
+        # Place cursor back at the bottom of the scrolling region
+        anchor_row = max(1, progress_top - 1)
+        buf.append(f"\x1b[{anchor_row};1H")
+
+        # Single atomic write
+        sys.stderr.write("".join(buf))
+        sys.stderr.flush()
+
     def _run(self):
         """Background thread: update display every 100ms."""
         while not self._stop.wait(0.1):
-            screen = self._render_full_screen()
-            sys.stderr.write(screen)
-            sys.stderr.flush()
+            cols, rows, lines, overlay = self._render_frame()
+            self._draw_frame(cols, rows, lines, overlay)

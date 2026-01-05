@@ -294,6 +294,8 @@ def run(
             start_time,
             progress_state,
             infinite=infinite,
+            output_name=output,
+            oseek=oseek,
         )
         if not quiet:
             progress.start()
