@@ -165,7 +165,7 @@ class RunResult:
             cmd_line = f"\n\033[2mRepeat >>>\033[0;34m {self.repeat_cmd}\033[0m"
 
         msg = (
-            f"\n\033[36m[RandQuik]\033[32m {self.action} \033[1m{size_str}\033[0;32m in "
+            f"\033[36m[RandQuik]\033[32m {self.action} \033[1m{size_str}\033[0;32m in "
             f"\033[1m{time_str}\033[0;32m @ \033[1;32m{speed_gbs:.2f} GB/s{stats_fmt}\033[0m"
             f"{status_fmt}\033[1m{cmd_line}\n"
         )
