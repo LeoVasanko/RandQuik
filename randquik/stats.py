@@ -40,18 +40,27 @@ def format_time(seconds: float) -> str:
     if seconds < 0:
         return "--"
     if seconds < 1:
-        return f"{seconds * 1000:.0f} ms"
-    if seconds < 90:
-        return f"{seconds:.0f} s"
-    elif seconds < 5400:  # 90 minutes
-        m = int(seconds / 60)
-        return f"{m} m"
+        return f"{seconds * 1000:.0f}ms"
+    if seconds < 120:
+        return f"{int(seconds)}s"
+    elif seconds < 3600:
+        m = int(seconds // 60)
+        s = int(seconds % 60)
+        if s == 0:
+            return f"{m}m"
+        return f"{m}m{s}s"
     elif seconds < 172800:  # 48 hours
-        h = int(seconds / 3600)
-        return f"{h} h"
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        if m == 0:
+            return f"{h}h"
+        return f"{h}h{m}m"
     else:
-        d = int(seconds / 86400)
-        return f"{d} d"
+        d = int(seconds // 86400)
+        h = int((seconds % 86400) // 3600)
+        if h == 0:
+            return f"{d}d"
+        return f"{d}d{h}h"
 
 
 @dataclass
